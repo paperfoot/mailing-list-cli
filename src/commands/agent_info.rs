@@ -9,6 +9,11 @@ pub fn run() {
         "commands": {
             "agent-info": "Machine-readable capability manifest (this output)",
             "health": "Run a system health check (email-cli reachable, DB writable, config valid)",
+            "list create <name> [--description <text>]": "Create a list (also creates a Resend audience via email-cli)",
+            "list ls": "List all lists with subscriber counts",
+            "list show <id>": "Show one list's details",
+            "contact add <email> --list <id> [--first-name <f> --last-name <l>]": "Add a contact to a list",
+            "contact ls --list <id> [--limit N]": "List contacts in a list",
             "update [--check]": "Self-update from GitHub Releases",
             "skill install": "Install skill files into Claude / Codex / Gemini paths",
             "skill status": "Show which platforms have the skill installed"
@@ -33,7 +38,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli"],
-        "status": "v0.0.1 — foundations"
+        "status": "v0.0.2 — lists & contacts"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

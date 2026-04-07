@@ -126,3 +126,144 @@ fn unknown_command_returns_failure() {
         .assert()
         .failure();
 }
+
+fn stub_env() -> (TempDir, PathBuf, PathBuf) {
+    let stub = fixture_path("stub-email-cli.sh");
+    assert!(stub.exists(), "stub-email-cli.sh must exist");
+    let tmp = isolated_env();
+    let config_path = tmp.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+[sender]
+physical_address = "123 Test St"
+
+[email_cli]
+path = "{}"
+profile = "default"
+"#,
+            stub.display()
+        ),
+    )
+    .unwrap();
+    let db_path = tmp.path().join("state.db");
+    (tmp, config_path, db_path)
+}
+
+#[test]
+fn list_create_then_list_ls_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Create the list
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "newsletter"]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let value: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["status"], "success");
+    assert_eq!(value["data"]["name"], "newsletter");
+    assert_eq!(value["data"]["resend_audience_id"], "aud_test_12345");
+
+    // List them
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "ls"]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let value: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["data"]["count"], 1);
+    assert_eq!(value["data"]["lists"][0]["name"], "newsletter");
+}
+
+#[test]
+fn list_create_duplicate_returns_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "dup"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "dup"]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn contact_add_then_contact_ls_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Create a list first
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "newsletter"]);
+    cmd.assert().success();
+
+    // Add a contact
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+            "--first-name",
+            "Alice",
+        ]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let value: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["data"]["email"], "alice@example.com");
+    assert_eq!(value["data"]["list_id"], 1);
+
+    // List contacts
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--list", "1"]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let value: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["data"]["count"], 1);
+    assert_eq!(value["data"]["contacts"][0]["email"], "alice@example.com");
+    assert_eq!(value["data"]["contacts"][0]["first_name"], "Alice");
+}
+
+#[test]
+fn contact_add_to_unknown_list_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "999",
+        ]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn contact_add_invalid_email_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "add", "not-an-email", "--list", "1"]);
+    cmd.assert().failure().code(3);
+}

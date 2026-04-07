@@ -1,12 +1,12 @@
 pub mod migrations;
 
 use crate::error::AppError;
+use crate::models::{Contact, List};
 use crate::paths;
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 pub struct Db {
-    #[allow(dead_code)]
     pub conn: Connection,
 }
 
@@ -87,6 +87,202 @@ impl Db {
         }
         Ok(())
     }
+
+    // ─── List operations ───────────────────────────────────────────────
+
+    pub fn list_create(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        resend_audience_id: &str,
+    ) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO list (name, description, resend_audience_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![name, description, resend_audience_id, now],
+            )
+            .map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("UNIQUE constraint failed") {
+                    AppError::BadInput {
+                        code: "list_already_exists".into(),
+                        message: format!("a list named '{name}' already exists"),
+                        suggestion: "Use `mailing-list-cli list ls` to see existing lists, or pick a different name".into(),
+                    }
+                } else {
+                    AppError::Transient {
+                        code: "list_insert_failed".into(),
+                        message: format!("could not insert list: {e}"),
+                        suggestion: "Try again; if the problem persists, run `mailing-list-cli health`".into(),
+                    }
+                }
+            })?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_get_by_name(&self, name: &str) -> Result<Option<List>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT l.id, l.name, l.description, l.resend_audience_id, l.created_at,
+                        COALESCE((SELECT COUNT(*) FROM list_membership lm WHERE lm.list_id = l.id), 0) as member_count
+                 FROM list l
+                 WHERE l.name = ?1",
+            )
+            .map_err(query_err)?;
+        let row = stmt.query_row(params![name], |row| {
+            Ok(List {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                resend_audience_id: row.get(3)?,
+                created_at: row.get(4)?,
+                member_count: row.get(5)?,
+            })
+        });
+        match row {
+            Ok(l) => Ok(Some(l)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    pub fn list_all(&self) -> Result<Vec<List>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT l.id, l.name, l.description, l.resend_audience_id, l.created_at,
+                        COALESCE((SELECT COUNT(*) FROM list_membership lm WHERE lm.list_id = l.id), 0) as member_count
+                 FROM list l
+                 WHERE l.archived_at IS NULL
+                 ORDER BY l.id ASC",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(List {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    resend_audience_id: row.get(3)?,
+                    created_at: row.get(4)?,
+                    member_count: row.get(5)?,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+
+    pub fn list_get_by_id(&self, id: i64) -> Result<Option<List>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT l.id, l.name, l.description, l.resend_audience_id, l.created_at,
+                        COALESCE((SELECT COUNT(*) FROM list_membership lm WHERE lm.list_id = l.id), 0) as member_count
+                 FROM list l
+                 WHERE l.id = ?1",
+            )
+            .map_err(query_err)?;
+        let row = stmt.query_row(params![id], |row| {
+            Ok(List {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                resend_audience_id: row.get(3)?,
+                created_at: row.get(4)?,
+                member_count: row.get(5)?,
+            })
+        });
+        match row {
+            Ok(l) => Ok(Some(l)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    // ─── Contact operations ────────────────────────────────────────────
+
+    pub fn contact_upsert(
+        &self,
+        email: &str,
+        first_name: Option<&str>,
+        last_name: Option<&str>,
+    ) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        // Try insert first; if it conflicts, fetch the existing id.
+        let res = self.conn.execute(
+            "INSERT INTO contact (email, first_name, last_name, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'active', ?4, ?4)",
+            params![email, first_name, last_name, now],
+        );
+        match res {
+            Ok(_) => Ok(self.conn.last_insert_rowid()),
+            Err(e) if e.to_string().contains("UNIQUE constraint failed") => {
+                // Already exists — fetch id
+                self.conn
+                    .query_row(
+                        "SELECT id FROM contact WHERE email = ?1",
+                        params![email],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map_err(query_err)
+            }
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    pub fn contact_add_to_list(&self, contact_id: i64, list_id: i64) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO list_membership (list_id, contact_id, joined_at)
+                 VALUES (?1, ?2, ?3)",
+                params![list_id, contact_id, now],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn contact_list_in_list(
+        &self,
+        list_id: i64,
+        limit: usize,
+    ) -> Result<Vec<Contact>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT c.id, c.email, c.first_name, c.last_name, c.status, c.created_at
+                 FROM contact c
+                 INNER JOIN list_membership lm ON lm.contact_id = c.id
+                 WHERE lm.list_id = ?1
+                 ORDER BY c.id ASC
+                 LIMIT ?2",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map(params![list_id, limit as i64], |row| {
+                Ok(Contact {
+                    id: row.get(0)?,
+                    email: row.get(1)?,
+                    first_name: row.get(2)?,
+                    last_name: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+}
+
+fn query_err(e: rusqlite::Error) -> AppError {
+    AppError::Transient {
+        code: "db_query_failed".into(),
+        message: format!("database query failed: {e}"),
+        suggestion: "Run `mailing-list-cli health` to inspect the database state".into(),
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +324,66 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fk, 1);
+    }
+
+    #[test]
+    fn list_create_and_list_all() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let id = db
+            .list_create("newsletter", Some("weekly digest"), "aud_abc123")
+            .unwrap();
+        assert!(id > 0);
+        let lists = db.list_all().unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].name, "newsletter");
+        assert_eq!(lists[0].member_count, 0);
+    }
+
+    #[test]
+    fn list_create_duplicate_returns_bad_input() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.list_create("foo", None, "aud_1").unwrap();
+        let err = db.list_create("foo", None, "aud_2").unwrap_err();
+        assert_eq!(err.code(), "list_already_exists");
+    }
+
+    #[test]
+    fn contact_upsert_is_idempotent() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let id1 = db
+            .contact_upsert("alice@example.com", Some("Alice"), None)
+            .unwrap();
+        let id2 = db
+            .contact_upsert("alice@example.com", Some("Alice"), None)
+            .unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn contact_add_to_list_then_list_in_list() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let list_id = db.list_create("vip", None, "aud_v").unwrap();
+        let alice = db
+            .contact_upsert("alice@example.com", Some("Alice"), None)
+            .unwrap();
+        let bob = db
+            .contact_upsert("bob@example.com", Some("Bob"), None)
+            .unwrap();
+        db.contact_add_to_list(alice, list_id).unwrap();
+        db.contact_add_to_list(bob, list_id).unwrap();
+        // Adding same contact again is a no-op
+        db.contact_add_to_list(alice, list_id).unwrap();
+        let contacts = db.contact_list_in_list(list_id, 100).unwrap();
+        assert_eq!(contacts.len(), 2);
+        assert_eq!(contacts[0].email, "alice@example.com");
+        assert_eq!(contacts[1].email, "bob@example.com");
+
+        // member_count reflects the additions
+        let list = db.list_get_by_id(list_id).unwrap().unwrap();
+        assert_eq!(list.member_count, 2);
     }
 }

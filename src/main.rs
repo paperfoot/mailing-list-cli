@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod email_cli;
 mod error;
+mod models;
 mod output;
 mod paths;
 
@@ -24,6 +25,8 @@ fn main() -> ExitCode {
         Command::Health => commands::health::run(format),
         Command::Update { check } => commands::update::run(format, check),
         Command::Skill { action } => commands::skill::run(format, action),
+        Command::List { action } => commands::list::run(format, action),
+        Command::Contact { action } => commands::contact::run(format, action),
     };
 
     match result {

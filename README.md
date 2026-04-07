@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.0.1 Foundations](https://img.shields.io/badge/Status-v0.0.1_Foundations-orange?style=for-the-badge)](#status)
+[![Status: v0.0.2 Lists & Contacts](https://img.shields.io/badge/Status-v0.0.2_Lists_%26_Contacts-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -47,9 +47,9 @@ The existing options for an agent are bad:
 
 ## Status
 
-> **v0.0.1 Foundations shipped.** No mailing-list features yet.
+> **v0.0.2 — Lists & contacts shipped.**
 >
-> The binary builds, the database migrates, the JSON envelope works, `agent-info` is wired, and `health` checks every dependency including `email-cli`. 20 tests pass, clippy clean, CI green. Mailing-list features (lists, contacts, templates, broadcasts) land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues/1).
+> You can now `list create`, `list ls`, `list show`, `contact add`, and `contact ls`. Each command writes to the local SQLite store and shells out to `email-cli` to mirror the audience and contact onto Resend. 30 tests pass, clippy clean, CI green. Templates, segments, broadcasts, suppression, opt-in, A/B testing, and analytics land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues/1).
 >
 > Read [the research](./research), the [design spec](./docs/specs/2026-04-07-mailing-list-cli-design.md), or the [Phase 1 plan](./docs/plans/2026-04-07-phase-1-foundations.md) to see what we're building toward. Star the repo to follow along.
 

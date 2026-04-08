@@ -660,3 +660,87 @@ fn segment_create_with_invalid_filter_returns_exit_3() {
         ]);
     cmd.assert().failure().code(3);
 }
+
+#[test]
+fn contact_ls_with_filter_returns_matching_subset() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    for args in [
+        vec!["--json", "list", "create", "news"],
+        vec![
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+        ],
+        vec!["--json", "contact", "add", "bob@example.com", "--list", "1"],
+        vec!["--json", "contact", "tag", "alice@example.com", "vip"],
+    ] {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args(&args);
+        cmd.assert().success();
+    }
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--filter", "tag:vip"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+    assert_eq!(v["data"]["contacts"][0]["email"], "alice@example.com");
+}
+
+#[test]
+fn contact_ls_with_cursor_paginates() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Seed: 3 contacts
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+    for email in ["a@ex.com", "b@ex.com", "c@ex.com"] {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args(["--json", "contact", "add", email, "--list", "1"]);
+        cmd.assert().success();
+    }
+
+    // First page: limit 2
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--limit", "2"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 2);
+    let cursor = v["data"]["next_cursor"].as_i64().unwrap();
+
+    // Second page
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "ls",
+            "--limit",
+            "2",
+            "--cursor",
+            &cursor.to_string(),
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+    assert_eq!(v["data"]["contacts"][0]["email"], "c@ex.com");
+}

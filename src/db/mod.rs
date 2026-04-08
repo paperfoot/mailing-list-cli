@@ -257,6 +257,7 @@ impl Db {
         }
     }
 
+    #[allow(dead_code)] // legacy helper, retained for tests; superseded by segment_members
     pub fn contact_list_in_list(
         &self,
         list_id: i64,

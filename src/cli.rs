@@ -138,12 +138,18 @@ pub struct ContactAddArgs {
 
 #[derive(Args, Debug)]
 pub struct ContactListArgs {
-    /// The list id
+    /// Restrict to a list id (omit to search across all lists)
     #[arg(long)]
-    pub list: i64,
-    /// Maximum number of contacts to return
+    pub list: Option<i64>,
+    /// Filter expression (see the filter grammar reference)
+    #[arg(long)]
+    pub filter: Option<String>,
+    /// Maximum number of contacts to return (max 10000)
     #[arg(long, default_value = "100")]
     pub limit: usize,
+    /// Cursor (last contact id seen); start from the beginning if omitted
+    #[arg(long)]
+    pub cursor: Option<i64>,
 }
 
 #[derive(Subcommand, Debug)]

@@ -159,24 +159,57 @@ fn show_contact(
 }
 
 fn list_contacts(format: Format, db: &Db, args: ContactListArgs) -> Result<(), AppError> {
-    let list = db
-        .list_get_by_id(args.list)?
-        .ok_or_else(|| AppError::BadInput {
-            code: "list_not_found".into(),
-            message: format!("no list with id {}", args.list),
-            suggestion: "Run `mailing-list-cli list ls` to see all lists".into(),
-        })?;
+    let limit = args.limit.min(10_000);
 
-    let contacts = db.contact_list_in_list(list.id, args.limit)?;
+    // Build the base SQL fragment from filter + optional list restriction.
+    // If both are present, AND them; if neither, match all contacts.
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+
+    if let Some(expr_text) = &args.filter {
+        let parsed = crate::segment::parser::parse(expr_text).map_err(|e| AppError::BadInput {
+            code: "invalid_filter_expression".into(),
+            message: e.message.clone(),
+            suggestion: e.suggestion.clone(),
+        })?;
+        let (frag, filter_params) = crate::segment::compiler::to_sql_where(&parsed);
+        clauses.push(format!("({frag})"));
+        params.extend(filter_params);
+    }
+
+    if let Some(list_id) = args.list {
+        // Verify the list exists first so agents get a clear error instead of "0 results".
+        let list = db
+            .list_get_by_id(list_id)?
+            .ok_or_else(|| AppError::BadInput {
+                code: "list_not_found".into(),
+                message: format!("no list with id {list_id}"),
+                suggestion: "Run `mailing-list-cli list ls` to see all lists".into(),
+            })?;
+        clauses.push(
+            "c.id IN (SELECT lm.contact_id FROM list_membership lm WHERE lm.list_id = ?)"
+                .to_string(),
+        );
+        params.push(rusqlite::types::Value::Integer(list.id));
+    }
+
+    let fragment = if clauses.is_empty() {
+        "1 = 1".to_string()
+    } else {
+        clauses.join(" AND ")
+    };
+
+    let contacts = db.segment_members(&fragment, &params, limit, args.cursor)?;
     let count = contacts.len();
+    let next_cursor = contacts.last().map(|c| c.id);
     output::success(
         format,
-        &format!("{} contact(s) in list '{}'", count, list.name),
+        &format!("{count} contact(s)"),
         json!({
-            "list_id": list.id,
-            "list_name": list.name,
             "contacts": contacts,
-            "count": count
+            "count": count,
+            "next_cursor": next_cursor,
+            "limit": limit
         }),
     );
     Ok(())

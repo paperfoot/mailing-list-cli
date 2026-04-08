@@ -44,6 +44,14 @@ pub fn run() {
             "broadcast cancel <id> --confirm": "Cancel a draft or scheduled broadcast",
             "broadcast ls [--status <s>] [--limit N]": "List recent broadcasts",
             "broadcast show <id>": "Show broadcast details including recipient + stat counts",
+            "webhook listen [--bind <addr>]": "Run the HTTP webhook listener (long-running)",
+            "webhook poll [--reset]": "Poll email-cli for delivery status updates (alias: `event poll`)",
+            "webhook test --to <url> --event <type>": "POST a synthetic event to a listener",
+            "event poll [--reset]": "Alias for `webhook poll`",
+            "report show <broadcast-id>": "Per-broadcast summary (delivered/bounced/opened/clicked/CTR)",
+            "report links <broadcast-id>": "Per-link click counts for a broadcast",
+            "report engagement [--list <name>|--segment <name>] [--days N]": "Engagement score across a list/segment",
+            "report deliverability [--days N]": "Rolling-window bounce rate / complaint rate / domain health",
             "update [--check]": "Self-update from GitHub Releases",
             "skill install": "Install skill files into Claude / Codex / Gemini paths",
             "skill status": "Show which platforms have the skill installed"
@@ -68,7 +76,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.1.1 — broadcasts, send pipeline, HMAC unsubscribe tokens"
+        "status": "v0.1.2 — webhook ingestion (poll + listen), reports (show/links/engagement/deliverability)"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

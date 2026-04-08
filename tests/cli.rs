@@ -2074,3 +2074,26 @@ fn webhook_test_unknown_event_type_fails_with_exit_3() {
         ]);
     cmd.assert().failure().code(3);
 }
+
+#[test]
+fn agent_info_lists_phase_6_commands() {
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    let out = cmd.args(["--json", "agent-info"]).assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    let commands = v["commands"].as_object().unwrap();
+    for key in [
+        "webhook listen [--bind <addr>]",
+        "webhook poll [--reset]",
+        "webhook test --to <url> --event <type>",
+        "event poll [--reset]",
+        "report show <broadcast-id>",
+        "report links <broadcast-id>",
+        "report engagement [--list <name>|--segment <name>] [--days N]",
+        "report deliverability [--days N]",
+    ] {
+        assert!(commands.contains_key(key), "agent-info missing {key}");
+    }
+    assert!(v["status"].as_str().unwrap().starts_with("v0.1.2"));
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+}

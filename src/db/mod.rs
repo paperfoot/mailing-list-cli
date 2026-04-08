@@ -365,7 +365,6 @@ impl Db {
         Ok(affected > 0)
     }
 
-    #[allow(dead_code)] // Used by tests; kept for future contact-detail commands
     pub fn contact_tags_for(&self, contact_id: i64) -> Result<Vec<String>, AppError> {
         let mut stmt = self
             .conn
@@ -587,8 +586,52 @@ impl Db {
         Ok(())
     }
 
+    /// Return all list names (and ids) the contact is currently a member of.
+    pub fn contact_lists_for(&self, contact_id: i64) -> Result<Vec<(i64, String)>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT l.id, l.name FROM list l
+                 JOIN list_membership lm ON lm.list_id = l.id
+                 WHERE lm.contact_id = ?1
+                 ORDER BY l.name",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map(params![contact_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+
+    /// Fetch the full `Contact` row for a lookup by email.
+    pub fn contact_get_by_email(&self, email: &str) -> Result<Option<Contact>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, email, first_name, last_name, status, created_at
+                 FROM contact WHERE email = ?1 COLLATE NOCASE",
+            )
+            .map_err(query_err)?;
+        let row = stmt.query_row(params![email], |row| {
+            Ok(Contact {
+                id: row.get(0)?,
+                email: row.get(1)?,
+                first_name: row.get(2)?,
+                last_name: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        });
+        match row {
+            Ok(c) => Ok(Some(c)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
     /// Fetch all field values for a contact, returned as (key, display_string).
-    #[allow(dead_code)] // Wired up in Task 14
     pub fn contact_fields_for(&self, contact_id: i64) -> Result<Vec<(String, String)>, AppError> {
         let mut stmt = self
             .conn

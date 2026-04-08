@@ -511,3 +511,57 @@ fn contact_add_with_field_flags() {
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
     assert_eq!(v["data"]["fields_set"], 1);
 }
+
+#[test]
+fn contact_show_returns_full_details() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Seed
+    for args in [
+        vec!["--json", "list", "create", "news"],
+        vec!["--json", "field", "create", "company", "--type", "text"],
+        vec![
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+            "--first-name",
+            "Alice",
+            "--field",
+            "company=Acme",
+        ],
+        vec!["--json", "contact", "tag", "alice@example.com", "vip"],
+    ] {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args(&args);
+        cmd.assert().success();
+    }
+
+    // Show
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "show", "alice@example.com"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["contact"]["email"], "alice@example.com");
+    assert_eq!(v["data"]["contact"]["first_name"], "Alice");
+    assert_eq!(v["data"]["tags"][0], "vip");
+    assert_eq!(v["data"]["fields"]["company"], "Acme");
+    assert_eq!(v["data"]["lists"][0]["name"], "news");
+}
+
+#[test]
+fn contact_show_on_missing_email_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "show", "ghost@example.com"]);
+    cmd.assert().failure().code(3);
+}

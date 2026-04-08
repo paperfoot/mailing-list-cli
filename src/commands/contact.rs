@@ -17,6 +17,7 @@ pub fn run(format: Format, action: ContactAction) -> Result<(), AppError> {
         ContactAction::Tag(args) => tag_contact(format, &db, args),
         ContactAction::Untag(args) => untag_contact(format, &db, args),
         ContactAction::Set(args) => set_field(format, &db, args),
+        ContactAction::Show(args) => show_contact(format, &db, args),
     }
 }
 
@@ -116,6 +117,42 @@ fn set_field(format: Format, db: &Db, args: crate::cli::ContactSetArgs) -> Resul
             "email": args.email,
             "field": args.field,
             "value": args.value
+        }),
+    );
+    Ok(())
+}
+
+fn show_contact(
+    format: Format,
+    db: &Db,
+    args: crate::cli::ContactShowArgs,
+) -> Result<(), AppError> {
+    let contact = db
+        .contact_get_by_email(&args.email)?
+        .ok_or_else(|| AppError::BadInput {
+            code: "contact_not_found".into(),
+            message: format!("no contact with email '{}'", args.email),
+            suggestion: "Run `mailing-list-cli contact ls --list <id>` to browse contacts".into(),
+        })?;
+    let tags = db.contact_tags_for(contact.id)?;
+    let fields = db.contact_fields_for(contact.id)?;
+    let lists = db.contact_lists_for(contact.id)?;
+    let fields_json: serde_json::Map<String, serde_json::Value> = fields
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
+    let lists_json: Vec<serde_json::Value> = lists
+        .into_iter()
+        .map(|(id, name)| json!({ "id": id, "name": name }))
+        .collect();
+    output::success(
+        format,
+        &format!("contact: {}", contact.email),
+        json!({
+            "contact": contact,
+            "tags": tags,
+            "fields": fields_json,
+            "lists": lists_json
         }),
     );
     Ok(())

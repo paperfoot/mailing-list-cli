@@ -106,6 +106,8 @@ pub enum ContactAction {
     Untag(ContactTagArgs),
     /// Set a custom field value on a contact
     Set(ContactSetArgs),
+    /// Show a contact's full details
+    Show(ContactShowArgs),
 }
 
 #[derive(Args, Debug)]
@@ -202,6 +204,12 @@ pub struct ContactSetArgs {
     pub field: String,
     /// Field value (coerced to the field's declared type)
     pub value: String,
+}
+
+#[derive(Args, Debug)]
+pub struct ContactShowArgs {
+    /// Contact email
+    pub email: String,
 }
 
 #[derive(Subcommand, Debug)]

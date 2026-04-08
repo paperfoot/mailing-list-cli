@@ -1,6 +1,8 @@
 mod cli;
 mod commands;
 mod config;
+#[allow(dead_code)] // wired into commands::contact in Task 21
+mod csv_import;
 mod db;
 mod email_cli;
 mod error;

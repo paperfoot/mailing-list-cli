@@ -1377,3 +1377,217 @@ fn contact_ls_filter_on_text_field_with_numeric_content() {
     assert_eq!(v["data"]["count"], 1);
     assert_eq!(v["data"]["contacts"][0]["email"], "alice@example.com");
 }
+
+const VALID_TEMPLATE: &str = r#"---
+name: welcome
+subject: "Welcome, {{ first_name }}"
+variables:
+  - name: first_name
+    type: string
+    required: true
+---
+<mjml>
+  <mj-head>
+    <mj-title>Welcome</mj-title>
+    <mj-preview>Welcome to our list</mj-preview>
+  </mj-head>
+  <mj-body>
+    <mj-section>
+      <mj-column>
+        <mj-text>Hi {{ first_name }}</mj-text>
+        {{{ unsubscribe_link }}}
+        {{{ physical_address_footer }}}
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>
+"#;
+
+fn write_template_file(tmp: &TempDir, name: &str, content: &str) -> PathBuf {
+    let path = tmp.path().join(format!("{name}.mjml.hbs"));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+fn template_create_from_file_list_show_round_trip() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+
+    // Create from file
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["name"], "welcome");
+    assert_eq!(v["data"]["subject"], "Welcome, {{ first_name }}");
+
+    // List
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "ls"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+
+    // Show
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "show", "welcome"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert!(v["data"]["mjml_source"].as_str().unwrap().contains("mjml"));
+}
+
+#[test]
+fn template_create_scaffold_without_file() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "create", "scaffold"]);
+    cmd.assert().success();
+}
+
+#[test]
+fn template_render_with_data_returns_html() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let data_path = tmp.path().join("data.json");
+    std::fs::write(&data_path, r#"{"first_name":"Alice"}"#).unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "render",
+            "welcome",
+            "--with-data",
+            data_path.to_str().unwrap(),
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["subject"], "Welcome, Alice");
+    assert!(v["data"]["html"].as_str().unwrap().contains("Hi Alice"));
+    assert!(v["data"]["size_bytes"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn template_lint_clean_template_passes() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "lint", "welcome"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["errors"], 0);
+}
+
+#[test]
+fn template_lint_missing_unsubscribe_errors() {
+    let (tmp, config_path, db_path) = stub_env();
+    let bad = VALID_TEMPLATE
+        .replace("{{{ unsubscribe_link }}}", "")
+        .replace("name: welcome", "name: bad");
+    let template_path = write_template_file(&tmp, "bad", &bad);
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "bad",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "lint", "bad"]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn template_rm_without_confirm_fails() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "rm", "welcome"]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn template_guidelines_prints_authoring_guide() {
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.args(["--json", "template", "guidelines"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    let guide = v["data"]["guide_markdown"].as_str().unwrap();
+    assert!(guide.contains("Template Authoring for mailing-list-cli"));
+    assert!(guide.contains("{{{ unsubscribe_link }}}"));
+}

@@ -299,4 +299,42 @@ mod tests {
         let (sql, _) = to_sql_where(&expr);
         assert!(sql.starts_with("(NOT "));
     }
+
+    #[test]
+    fn compiled_sql_executes_against_sqlite() {
+        use crate::db::Db;
+        use rusqlite::params_from_iter;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        // Seed one list, one contact, one tag
+        let list_id = db.list_create("news", None, "aud_x").unwrap();
+        let alice = db
+            .contact_upsert("alice@example.com", Some("Alice"), None)
+            .unwrap();
+        db.contact_add_to_list(alice, list_id).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tag (name) VALUES ('vip')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO contact_tag (contact_id, tag_id, applied_at) \
+                 VALUES (?, (SELECT id FROM tag WHERE name='vip'), datetime('now'))",
+                [alice],
+            )
+            .unwrap();
+
+        let expr = parse("tag:vip").unwrap();
+        let (frag, params) = to_sql_where(&expr);
+        let sql = format!("SELECT c.id FROM contact c WHERE {frag}");
+        let mut stmt = db.conn.prepare(&sql).unwrap();
+        let rows: Vec<i64> = stmt
+            .query_map(params_from_iter(params.iter()), |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![alice]);
+    }
 }

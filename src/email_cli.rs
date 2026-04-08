@@ -1,23 +1,42 @@
 use crate::error::AppError;
 use serde_json::Value;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration as StdDuration, Instant};
 
 /// A handle to the local email-cli binary.
 pub struct EmailCli {
     pub path: String,
     pub profile: String,
+    last_call: Mutex<Instant>,
 }
+
+const MIN_INTERVAL: StdDuration = StdDuration::from_millis(200);
 
 impl EmailCli {
     pub fn new(path: impl Into<String>, profile: impl Into<String>) -> Self {
         Self {
             path: path.into(),
             profile: profile.into(),
+            last_call: Mutex::new(Instant::now() - MIN_INTERVAL),
         }
+    }
+
+    /// Sleep until at least 200ms have elapsed since the last call. This
+    /// enforces the 5 req/sec Resend rate limit at the subprocess layer
+    /// across ALL invocations.
+    fn throttle(&self) {
+        let mut last = self.last_call.lock().unwrap();
+        let elapsed = last.elapsed();
+        if elapsed < MIN_INTERVAL {
+            std::thread::sleep(MIN_INTERVAL - elapsed);
+        }
+        *last = Instant::now();
     }
 
     /// Run `email-cli --json agent-info` and return the parsed manifest.
     pub fn agent_info(&self) -> Result<Value, AppError> {
+        self.throttle();
         let output = Command::new(&self.path)
             .args(["--json", "agent-info"])
             .stdout(Stdio::piped())
@@ -56,6 +75,7 @@ impl EmailCli {
     /// November 2025 and email-cli v0.6+ removed the legacy `audience`
     /// subcommand entirely.
     pub fn segment_create(&self, name: &str) -> Result<String, AppError> {
+        self.throttle();
         let output = Command::new(&self.path)
             .args(["--json", "segment", "create", "--name", name])
             .stdout(Stdio::piped())
@@ -124,6 +144,7 @@ impl EmailCli {
         segments: &[&str],
         properties: Option<&Value>,
     ) -> Result<(), AppError> {
+        self.throttle();
         let mut args: Vec<String> = vec![
             "--json".into(),
             "contact".into(),
@@ -191,6 +212,7 @@ impl EmailCli {
         contact_email: &str,
         segment_id: &str,
     ) -> Result<(), AppError> {
+        self.throttle();
         let output = Command::new(&self.path)
             .args([
                 "--json",
@@ -230,6 +252,7 @@ impl EmailCli {
     /// Run `email-cli --json profile test <profile>`.
     #[allow(dead_code)]
     pub fn profile_test(&self) -> Result<Value, AppError> {
+        self.throttle();
         let output = Command::new(&self.path)
             .args(["--json", "profile", "test", &self.profile])
             .stdout(Stdio::piped())

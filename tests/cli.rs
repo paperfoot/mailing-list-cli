@@ -820,6 +820,189 @@ fn segment_members_matches_contact_ls_filter() {
 }
 
 #[test]
+fn contact_import_happy_path() {
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("contacts.csv");
+    std::fs::write(
+        &csv_path,
+        "email,first_name,consent_source\n\
+         alice@example.com,Alice,landing\n\
+         bob@example.com,Bob,manual\n",
+    )
+    .unwrap();
+
+    // Create list first
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    // Import
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            csv_path.to_str().unwrap(),
+            "--list",
+            "1",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["inserted"], 2);
+    assert_eq!(v["data"]["skipped_suppressed"], 0);
+}
+
+#[test]
+fn contact_import_rejects_missing_consent_source() {
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("nocnt.csv");
+    std::fs::write(&csv_path, "email,first_name\nalice@example.com,Alice\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            csv_path.to_str().unwrap(),
+            "--list",
+            "1",
+        ]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn contact_import_unsafe_no_consent_tags_rows() {
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("nocnt.csv");
+    std::fs::write(&csv_path, "email\nalice@example.com\n").unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            csv_path.to_str().unwrap(),
+            "--list",
+            "1",
+            "--unsafe-no-consent",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["tagged_without_consent"], 1);
+
+    // And the tag actually landed
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "tag", "ls"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    let tags: Vec<String> = v["data"]["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(tags.contains(&"imported_without_consent".to_string()));
+}
+
+#[test]
+fn contact_import_rejects_double_opt_in_flag_in_phase_3() {
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("doi.csv");
+    std::fs::write(
+        &csv_path,
+        "email,consent_source\nalice@example.com,manual\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            csv_path.to_str().unwrap(),
+            "--list",
+            "1",
+            "--double-opt-in",
+        ]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn contact_import_rerun_is_idempotent() {
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("contacts.csv");
+    std::fs::write(
+        &csv_path,
+        "email,consent_source\nalice@example.com,manual\nbob@example.com,manual\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    for _ in 0..3 {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args([
+                "--json",
+                "contact",
+                "import",
+                csv_path.to_str().unwrap(),
+                "--list",
+                "1",
+            ]);
+        cmd.assert().success();
+    }
+
+    // Still exactly 2 contacts
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--list", "1"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 2);
+}
+
+#[test]
 fn contact_add_duplicate_triggers_segment_contact_add() {
     let (_tmp, config_path, db_path) = stub_env();
 

@@ -18,7 +18,113 @@ pub fn run(format: Format, action: ContactAction) -> Result<(), AppError> {
         ContactAction::Untag(args) => untag_contact(format, &db, args),
         ContactAction::Set(args) => set_field(format, &db, args),
         ContactAction::Show(args) => show_contact(format, &db, args),
+        ContactAction::Import(args) => import(format, &db, &cli, args),
     }
+}
+
+fn import(
+    format: Format,
+    db: &Db,
+    cli: &EmailCli,
+    args: crate::cli::ContactImportArgs,
+) -> Result<(), AppError> {
+    // Defer real DOI to Phase 7.
+    if args.double_opt_in {
+        return Err(AppError::BadInput {
+            code: "double_opt_in_not_available".into(),
+            message:
+                "--double-opt-in requires `optin start`/`verify` which ship in v0.1.3 (Phase 7)"
+                    .into(),
+            suggestion:
+                "Rerun without --double-opt-in; for now imported contacts default to status=active"
+                    .into(),
+        });
+    }
+
+    let list = db
+        .list_get_by_id(args.list)?
+        .ok_or_else(|| AppError::BadInput {
+            code: "list_not_found".into(),
+            message: format!("no list with id {}", args.list),
+            suggestion: "Run `mailing-list-cli list ls`".into(),
+        })?;
+
+    // Read + validate all rows before touching the DB so a malformed file
+    // never leaves a half-imported state.
+    let file = std::fs::File::open(&args.file).map_err(|e| AppError::BadInput {
+        code: "csv_open_failed".into(),
+        message: format!("could not open {}: {e}", args.file.display()),
+        suggestion: "Check the file path and permissions".into(),
+    })?;
+    let rows = crate::csv_import::read_rows(file, args.unsafe_no_consent)?;
+
+    let total = rows.len();
+    let mut summary = crate::csv_import::ImportSummary {
+        total_rows: total,
+        ..Default::default()
+    };
+
+    for (idx, row) in rows.iter().enumerate() {
+        // Local write first
+        match crate::csv_import::apply_row_local(db, list.id, row, args.unsafe_no_consent) {
+            Ok(()) => {
+                summary.inserted += 1;
+                if args.unsafe_no_consent {
+                    summary.tagged_without_consent += 1;
+                }
+            }
+            Err(e) if e.code() == "contact_suppressed" => {
+                summary.skipped_suppressed += 1;
+                continue;
+            }
+            Err(e) => {
+                summary.skipped_invalid += 1;
+                summary
+                    .errors
+                    .push(format!("row {}: {}", idx + 2, e.message()));
+                continue;
+            }
+        }
+
+        // Mirror to Resend (rate-limited at the subprocess layer).
+        // Failures don't abort the import — they roll up into the summary.
+        if let Err(e) = cli.contact_create(
+            &row.email,
+            row.first_name.as_deref(),
+            row.last_name.as_deref(),
+            &[list.resend_segment_id.as_str()],
+            None,
+        ) {
+            summary
+                .errors
+                .push(format!("row {}: {} (resend mirror)", idx + 2, e.message()));
+        }
+
+        // Progress to stderr every 100 rows
+        if (idx + 1) % 100 == 0 {
+            eprintln!("imported {}/{}", idx + 1, total);
+        }
+    }
+
+    output::success(
+        format,
+        &format!(
+            "imported {} of {} rows ({} suppressed, {} errors)",
+            summary.inserted,
+            summary.total_rows,
+            summary.skipped_suppressed,
+            summary.skipped_invalid
+        ),
+        json!({
+            "total_rows": summary.total_rows,
+            "inserted": summary.inserted,
+            "skipped_suppressed": summary.skipped_suppressed,
+            "skipped_invalid": summary.skipped_invalid,
+            "tagged_without_consent": summary.tagged_without_consent,
+            "errors": summary.errors
+        }),
+    );
+    Ok(())
 }
 
 fn add(format: Format, db: &Db, cli: &EmailCli, args: ContactAddArgs) -> Result<(), AppError> {

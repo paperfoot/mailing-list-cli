@@ -108,6 +108,8 @@ pub enum ContactAction {
     Set(ContactSetArgs),
     /// Show a contact's full details
     Show(ContactShowArgs),
+    /// Bulk-import contacts from a CSV file
+    Import(ContactImportArgs),
 }
 
 #[derive(Args, Debug)]
@@ -261,4 +263,19 @@ pub struct SegmentRmArgs {
     pub name: String,
     #[arg(long)]
     pub confirm: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ContactImportArgs {
+    /// Path to the CSV file
+    pub file: std::path::PathBuf,
+    /// The list id to add every imported row to
+    #[arg(long)]
+    pub list: i64,
+    /// Send a double opt-in confirmation (Phase 7 feature; errors in Phase 3)
+    #[arg(long = "double-opt-in")]
+    pub double_opt_in: bool,
+    /// Allow import without per-row consent (adds `imported_without_consent` tag)
+    #[arg(long = "unsafe-no-consent")]
+    pub unsafe_no_consent: bool,
 }

@@ -744,3 +744,77 @@ fn contact_ls_with_cursor_paginates() {
     assert_eq!(v["data"]["count"], 1);
     assert_eq!(v["data"]["contacts"][0]["email"], "c@ex.com");
 }
+
+#[test]
+fn segment_members_matches_contact_ls_filter() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Seed a non-trivial dataset: 4 contacts, 2 tags, varied memberships
+    for args in [
+        vec!["--json", "list", "create", "news"],
+        vec![
+            "--json",
+            "contact",
+            "add",
+            "alice@ex.com",
+            "--list",
+            "1",
+            "--first-name",
+            "Alice",
+        ],
+        vec!["--json", "contact", "add", "bob@ex.com", "--list", "1"],
+        vec!["--json", "contact", "add", "carol@ex.com", "--list", "1"],
+        vec!["--json", "contact", "add", "dan@ex.com", "--list", "1"],
+        vec!["--json", "contact", "tag", "alice@ex.com", "vip"],
+        vec!["--json", "contact", "tag", "carol@ex.com", "vip"],
+        vec!["--json", "contact", "tag", "alice@ex.com", "early"],
+    ] {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args(&args);
+        cmd.assert().success();
+    }
+
+    let filter = "tag:vip AND NOT tag:early";
+
+    // Path 1: contact ls --filter
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--filter", filter]);
+    let out = cmd.assert().success();
+    let v_ls: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+
+    // Path 2: segment create + segment members
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "create", "loyal", "--filter", filter]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "members", "loyal"]);
+    let out = cmd.assert().success();
+    let v_seg: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+
+    // Emails should match exactly
+    let ls_emails: Vec<String> = v_ls["data"]["contacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["email"].as_str().unwrap().to_string())
+        .collect();
+    let seg_emails: Vec<String> = v_seg["data"]["contacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["email"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ls_emails, seg_emails);
+    assert_eq!(ls_emails, vec!["carol@ex.com".to_string()]);
+}

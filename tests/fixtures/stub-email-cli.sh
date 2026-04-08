@@ -85,6 +85,53 @@ case "$1" in
                 ;;
         esac
         ;;
+    "batch")
+        if [ "$2" = "send" ]; then
+            # Parse the --file argument to mirror back per-recipient entries.
+            # Find the file path after --file
+            file=""
+            shift; shift
+            while [ "$#" -gt 0 ]; do
+                if [ "$1" = "--file" ]; then
+                    file="$2"
+                    break
+                fi
+                shift
+            done
+            if [ -n "$file" ] && [ -f "$file" ]; then
+                # Extract recipient emails from the batch JSON file using awk.
+                # Each entry has "to": ["email@..."]
+                emails=$(awk '
+                    /"to":/ {
+                        getline
+                        gsub(/[",[:space:]\[\]]/, "")
+                        if ($0 != "") print $0
+                    }
+                ' "$file")
+                # Build a JSON array of {id, to} entries
+                printf '{"version":"1","status":"success","data":['
+                first=1
+                i=1
+                for email in $emails; do
+                    if [ $first -eq 1 ]; then
+                        first=0
+                    else
+                        printf ','
+                    fi
+                    printf '{"id":"em_stub_%d","to":"%s"}' "$i" "$email"
+                    i=$((i + 1))
+                done
+                printf ']}\n'
+                exit 0
+            fi
+            echo '{"version":"1","status":"success","data":[{"id":"em_stub_1","to":"alice@example.com"}]}'
+            exit 0
+        fi
+        ;;
+    "send")
+        echo '{"version":"1","status":"success","data":{"id":"em_stub_tx_1"}}'
+        exit 0
+        ;;
 esac
 
 echo '{"version":"1","status":"error","error":{"code":"unsupported","message":"stub","suggestion":"this is a test stub"}}' >&2

@@ -249,6 +249,144 @@ impl EmailCli {
         Ok(())
     }
 
+    /// Shell out to `email-cli batch send --file <path>`. Returns a Vec of
+    /// `(recipient_email, resend_email_id)` pairs from the response.
+    #[allow(dead_code)]
+    pub fn batch_send(
+        &self,
+        batch_file: &std::path::Path,
+    ) -> Result<Vec<(String, String)>, AppError> {
+        self.throttle();
+        let output = Command::new(&self.path)
+            .args([
+                "--json",
+                "batch",
+                "send",
+                "--file",
+                batch_file.to_str().unwrap_or(""),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| AppError::Config {
+                code: "email_cli_invoke_failed".into(),
+                message: format!("could not run email-cli batch send: {e}"),
+                suggestion: "Check that email-cli is on PATH (v0.6+ required)".into(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Transient {
+                code: "batch_send_failed".into(),
+                message: format!(
+                    "email-cli batch send failed: {}",
+                    stderr.lines().next().unwrap_or("(no stderr)")
+                ),
+                suggestion: "Run `email-cli profile test` to verify Resend connectivity".into(),
+            });
+        }
+        let parsed: Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| AppError::Transient {
+                code: "batch_send_parse".into(),
+                message: format!("invalid JSON from email-cli batch send: {e}"),
+                suggestion: "Check email-cli version (v0.6+ required)".into(),
+            })?;
+        // Response shape: {"data": [{"id": "em_...", "to": "alice@..."}]}
+        let items = parsed
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| AppError::Transient {
+                code: "batch_send_no_data".into(),
+                message: "email-cli batch send response has no `data` array".into(),
+                suggestion: "Check email-cli version compatibility".into(),
+            })?;
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            let id = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let to = item
+                .get("to")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    item.get("to")
+                        .and_then(|v| v.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("")
+                .to_string();
+            out.push((to, id));
+        }
+        Ok(out)
+    }
+
+    /// Shell out to `email-cli send` for single-recipient transactional sends.
+    #[allow(dead_code)]
+    pub fn send(
+        &self,
+        from: &str,
+        to: &str,
+        subject: &str,
+        html: &str,
+        text: &str,
+    ) -> Result<String, AppError> {
+        self.throttle();
+        let output = Command::new(&self.path)
+            .args([
+                "--json",
+                "send",
+                "--account",
+                &self.profile,
+                "--to",
+                to,
+                "--from",
+                from,
+                "--subject",
+                subject,
+                "--html",
+                html,
+                "--text",
+                text,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| AppError::Config {
+                code: "email_cli_invoke_failed".into(),
+                message: format!("could not run email-cli send: {e}"),
+                suggestion: "Check that email-cli is on PATH".into(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Transient {
+                code: "send_failed".into(),
+                message: format!(
+                    "email-cli send failed: {}",
+                    stderr.lines().next().unwrap_or("(no stderr)")
+                ),
+                suggestion: "Run `email-cli profile test` to verify Resend connectivity".into(),
+            });
+        }
+        let parsed: Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| AppError::Transient {
+                code: "send_parse".into(),
+                message: format!("invalid JSON from email-cli send: {e}"),
+                suggestion: "Check email-cli version compatibility".into(),
+            })?;
+        let id = parsed
+            .get("data")
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Transient {
+                code: "send_no_id".into(),
+                message: "email-cli send response missing data.id".into(),
+                suggestion: "Check email-cli version compatibility".into(),
+            })?;
+        Ok(id.to_string())
+    }
+
     /// Run `email-cli --json profile test <profile>`.
     #[allow(dead_code)]
     pub fn profile_test(&self) -> Result<Value, AppError> {

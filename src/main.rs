@@ -10,6 +10,8 @@ mod models;
 mod output;
 mod paths;
 mod segment;
+#[allow(dead_code)] // full pipeline wired in Tasks 3-6
+mod template;
 
 use clap::Parser;
 use cli::{Cli, Command};

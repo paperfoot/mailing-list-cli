@@ -62,7 +62,7 @@ fn agent_info_lists_phase_3_commands() {
             "agent-info missing command: {key}"
         );
     }
-    assert!(v["status"].as_str().unwrap().starts_with("v0.0.4"));
+    assert!(v["status"].as_str().unwrap().starts_with("v0.0.5"));
 }
 
 #[test]

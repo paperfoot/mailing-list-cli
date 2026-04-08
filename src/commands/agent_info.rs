@@ -53,7 +53,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.0.4 — contacts, tags, fields, segments, filter parser, CSV import"
+        "status": "v0.0.5 — hotfix critical phase 3 bugs"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

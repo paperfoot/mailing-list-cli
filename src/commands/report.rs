@@ -1,34 +1,94 @@
 use crate::cli::{
     ReportAction, ReportDeliverabilityArgs, ReportEngagementArgs, ReportLinksArgs, ReportShowArgs,
 };
+use crate::db::Db;
 use crate::error::AppError;
-use crate::output::Format;
+use crate::output::{self, Format};
+use serde_json::json;
 
-/// Stub for Phase 6 Tasks 7-8. Returns a not_implemented error so the CLI
-/// surface compiles. The DB aggregation helpers (`Db::report_summary`,
-/// `report_links`, `report_deliverability`) and full implementations of these
-/// command handlers are the next thing to land — see
-/// `docs/plans/2026-04-08-phase-6-webhooks-reports.md` Tasks 7 and 8.
-pub fn run(_format: Format, action: ReportAction) -> Result<(), AppError> {
-    let cmd = match action {
-        ReportAction::Show(_) => "report show",
-        ReportAction::Links(_) => "report links",
-        ReportAction::Engagement(_) => "report engagement",
-        ReportAction::Deliverability(_) => "report deliverability",
-    };
-    Err(AppError::BadInput {
-        code: "report_not_implemented".into(),
-        message: format!("`{cmd}` is not yet implemented in v0.1.1"),
-        suggestion: "Phase 6 Tasks 7-8 will land in v0.1.2 (see docs/plans/2026-04-08-phase-6-webhooks-reports.md)".into(),
-    })
+pub fn run(format: Format, action: ReportAction) -> Result<(), AppError> {
+    match action {
+        ReportAction::Show(args) => show(format, args),
+        ReportAction::Links(args) => links(format, args),
+        ReportAction::Engagement(args) => engagement(format, args),
+        ReportAction::Deliverability(args) => deliverability(format, args),
+    }
 }
 
-#[allow(dead_code)]
-fn _suppress_unused(
-    args: ReportShowArgs,
-    _l: ReportLinksArgs,
-    _e: ReportEngagementArgs,
-    _d: ReportDeliverabilityArgs,
-) {
-    let _ = args.broadcast_id;
+fn show(format: Format, args: ReportShowArgs) -> Result<(), AppError> {
+    let db = Db::open()?;
+    let summary = db.report_summary(args.broadcast_id)?;
+    output::success(
+        format,
+        &format!("report for broadcast {}", summary.broadcast_name),
+        json!({ "summary": summary }),
+    );
+    Ok(())
+}
+
+fn links(format: Format, args: ReportLinksArgs) -> Result<(), AppError> {
+    let db = Db::open()?;
+    let links = db.report_links(args.broadcast_id)?;
+    let total_clicks: i64 = links.iter().map(|l| l.clicks).sum();
+    output::success(
+        format,
+        &format!(
+            "{} distinct link(s), {} total clicks",
+            links.len(),
+            total_clicks
+        ),
+        json!({ "links": links, "total_clicks": total_clicks }),
+    );
+    Ok(())
+}
+
+fn engagement(format: Format, args: ReportEngagementArgs) -> Result<(), AppError> {
+    // Phase 6 ships a naive aggregation; Phase 8 elaborates with per-list/per-segment scoping.
+    let db = Db::open()?;
+    let target = args
+        .list
+        .as_deref()
+        .or(args.segment.as_deref())
+        .unwrap_or("all");
+    let since = chrono::Utc::now() - chrono::Duration::days(args.days);
+    let since_str = since.to_rfc3339();
+    let opens: i64 = db
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM event WHERE type = 'email.opened' AND received_at >= ?1",
+            rusqlite::params![since_str],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let clicks: i64 = db
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM event WHERE type = 'email.clicked' AND received_at >= ?1",
+            rusqlite::params![since_str],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    output::success(
+        format,
+        &format!("engagement for {} (last {} days)", target, args.days),
+        json!({
+            "target": target,
+            "days": args.days,
+            "opens": opens,
+            "clicks": clicks,
+            "engagement_score": opens + (clicks * 3),
+        }),
+    );
+    Ok(())
+}
+
+fn deliverability(format: Format, args: ReportDeliverabilityArgs) -> Result<(), AppError> {
+    let db = Db::open()?;
+    let report = db.report_deliverability(args.days)?;
+    output::success(
+        format,
+        &format!("deliverability (last {} days)", args.days),
+        json!({ "report": report }),
+    );
+    Ok(())
 }

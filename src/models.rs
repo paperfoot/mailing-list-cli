@@ -28,7 +28,6 @@ pub struct Tag {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)] // Wired up in Task 11
 pub struct Field {
     pub id: i64,
     pub key: String,

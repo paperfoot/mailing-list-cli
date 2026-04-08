@@ -384,7 +384,6 @@ impl Db {
 
     // ─── Field operations ──────────────────────────────────────────────
 
-    #[allow(dead_code)] // Wired up in Task 11
     pub fn field_create(
         &self,
         key: &str,
@@ -435,7 +434,6 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)] // Wired up in Task 11
     pub fn field_all(&self) -> Result<Vec<crate::models::Field>, AppError> {
         let mut stmt = self
             .conn
@@ -459,7 +457,6 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
 
-    #[allow(dead_code)] // Wired up in Task 11
     pub fn field_get(&self, key: &str) -> Result<Option<crate::models::Field>, AppError> {
         let mut stmt = self
             .conn
@@ -485,7 +482,6 @@ impl Db {
         }
     }
 
-    #[allow(dead_code)] // Wired up in Task 11
     pub fn field_delete(&self, key: &str) -> Result<bool, AppError> {
         let affected = self
             .conn
@@ -495,7 +491,6 @@ impl Db {
     }
 }
 
-#[allow(dead_code)] // Used by field_create; called from bin in Task 11
 fn is_snake_case(s: &str) -> bool {
     !s.is_empty()
         && s.chars()

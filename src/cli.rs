@@ -159,9 +159,34 @@ pub struct TagRmArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum FieldAction {
-    /// Placeholder — full impl in Task 10
+    /// Create a new custom field
+    Create(FieldCreateArgs),
+    /// List all custom fields
     #[command(visible_alias = "ls")]
     List,
+    /// Delete a custom field (removes all stored values)
+    Rm(FieldRmArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct FieldCreateArgs {
+    /// Field key (snake_case, lowercase)
+    pub key: String,
+    /// Field type: text | number | date | bool | select
+    #[arg(long, value_parser = ["text", "number", "date", "bool", "select"])]
+    pub r#type: String,
+    /// Comma-separated options for --type select
+    #[arg(long)]
+    pub options: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct FieldRmArgs {
+    /// Field key
+    pub key: String,
+    /// Explicit confirmation (required)
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 #[derive(Subcommand, Debug)]

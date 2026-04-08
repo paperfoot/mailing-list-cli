@@ -356,3 +356,75 @@ fn contact_tag_on_missing_contact_fails_with_exit_3() {
         .args(["--json", "contact", "tag", "ghost@example.com", "vip"]);
     cmd.assert().failure().code(3);
 }
+
+#[test]
+fn field_create_list_rm_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Create
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "create", "company", "--type", "text"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["field"]["key"], "company");
+    assert_eq!(v["data"]["field"]["type"], "text");
+
+    // List
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "ls"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+
+    // Rm without --confirm fails
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "rm", "company"]);
+    cmd.assert().failure().code(3);
+
+    // Rm with --confirm succeeds
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "rm", "company", "--confirm"]);
+    cmd.assert().success();
+}
+
+#[test]
+fn field_create_select_without_options_fails() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "create", "plan", "--type", "select"]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn field_create_select_with_options_succeeds() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "field",
+            "create",
+            "plan",
+            "--type",
+            "select",
+            "--options",
+            "free,pro,enterprise",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["field"]["options"][1], "pro");
+}

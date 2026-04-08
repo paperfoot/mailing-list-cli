@@ -28,7 +28,7 @@ case "$1" in
                 echo '{"version":"1","status":"success","data":{"object":"list","data":[]}}'
                 exit 0
                 ;;
-            "contact-add")
+            "contact-add"|"contact-remove")
                 echo '{"version":"1","status":"success","data":{"id":"seg_test_12345"}}'
                 exit 0
                 ;;
@@ -37,6 +37,11 @@ case "$1" in
     "contact")
         case "$2" in
             "create")
+                # If MLC_STUB_CONTACT_DUPLICATE is set, simulate a duplicate
+                if [ -n "$MLC_STUB_CONTACT_DUPLICATE" ]; then
+                    echo "contact already exists" >&2
+                    exit 1
+                fi
                 echo '{"version":"1","status":"success","data":{"id":"contact_test_67890"}}'
                 exit 0
                 ;;

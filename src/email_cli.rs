@@ -161,9 +161,14 @@ impl EmailCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // A duplicate-contact error from email-cli is non-fatal: mailing-list-cli's
-            // local DB is authoritative and we only call this to mirror state to Resend.
-            if stderr.contains("already exists") || stderr.contains("duplicate") {
+            let is_duplicate = stderr.contains("already exists") || stderr.contains("duplicate");
+            if is_duplicate {
+                // The contact already exists in Resend. Our local DB is the
+                // source of truth for memberships, so ensure the existing
+                // Resend contact is in each requested segment.
+                for seg in segments {
+                    self.segment_contact_add(email, seg)?;
+                }
                 return Ok(());
             }
             return Err(AppError::Transient {
@@ -176,6 +181,49 @@ impl EmailCli {
             });
         }
 
+        Ok(())
+    }
+
+    /// Add an existing Resend contact to a segment. Used by `contact_create`'s
+    /// duplicate-handling path and by the CSV importer's re-run logic.
+    pub fn segment_contact_add(
+        &self,
+        contact_email: &str,
+        segment_id: &str,
+    ) -> Result<(), AppError> {
+        let output = Command::new(&self.path)
+            .args([
+                "--json",
+                "segment",
+                "contact-add",
+                "--contact",
+                contact_email,
+                "--segment",
+                segment_id,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| AppError::Config {
+                code: "email_cli_invoke_failed".into(),
+                message: format!("could not run email-cli: {e}"),
+                suggestion: "Check that email-cli is on PATH (v0.6+ required)".into(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // "already in segment" is a successful no-op
+            if stderr.contains("already") {
+                return Ok(());
+            }
+            return Err(AppError::Transient {
+                code: "segment_contact_add_failed".into(),
+                message: format!(
+                    "email-cli segment contact-add failed: {}",
+                    stderr.lines().next().unwrap_or("(no stderr)")
+                ),
+                suggestion: "Run `email-cli segment list` to verify the segment exists".into(),
+            });
+        }
         Ok(())
     }
 

@@ -818,3 +818,40 @@ fn segment_members_matches_contact_ls_filter() {
     assert_eq!(ls_emails, seg_emails);
     assert_eq!(ls_emails, vec!["carol@ex.com".to_string()]);
 }
+
+#[test]
+fn contact_add_duplicate_triggers_segment_contact_add() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Create list
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    // Simulate duplicate on the Resend side; the local DB should still succeed
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_STUB_CONTACT_DUPLICATE", "1")
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+        ]);
+    cmd.assert().success();
+
+    // Verify local membership
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "ls", "--list", "1"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+}

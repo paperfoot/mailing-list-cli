@@ -37,6 +37,13 @@ pub fn run() {
             "template edit <name> [--force]": "Open in $EDITOR, re-lint on save",
             "template rm <name> --confirm": "Delete a template",
             "template guidelines": "Print the embedded agent authoring guide",
+            "broadcast create --name <n> --template <tpl> --to <list:name|segment:name>": "Stage a named broadcast in draft status",
+            "broadcast preview <id> --to <email>": "Send a single test copy via email-cli send",
+            "broadcast schedule <id> --at <rfc3339>": "Move a draft broadcast to scheduled",
+            "broadcast send <id>": "Run the full send pipeline and dispatch via email-cli batch send",
+            "broadcast cancel <id> --confirm": "Cancel a draft or scheduled broadcast",
+            "broadcast ls [--status <s>] [--limit N]": "List recent broadcasts",
+            "broadcast show <id>": "Show broadcast details including recipient + stat counts",
             "update [--check]": "Self-update from GitHub Releases",
             "skill install": "Install skill files into Claude / Codex / Gemini paths",
             "skill status": "Show which platforms have the skill installed"
@@ -61,7 +68,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.1.0 — templates, MJML compile pipeline, lint, agent authoring guide"
+        "status": "v0.1.1 — broadcasts, send pipeline, HMAC unsubscribe tokens"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.1.0 email-cli v0.6](https://img.shields.io/badge/Status-v0.1.0_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.1.1 email-cli v0.6](https://img.shields.io/badge/Status-v0.1.1_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---

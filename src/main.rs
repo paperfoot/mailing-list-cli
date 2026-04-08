@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 mod broadcast;
 mod cli;
 mod commands;

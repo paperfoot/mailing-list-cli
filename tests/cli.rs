@@ -1823,3 +1823,254 @@ fn broadcast_preview_via_stub_sends_single() {
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
     assert_eq!(v["data"]["to"], "preview@example.com");
 }
+
+// ─── Phase 6: webhook + report tests ──────────────────────────────────────
+
+#[test]
+fn event_poll_with_no_events_returns_zero_processed() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "event", "poll"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["status"], "success");
+    assert_eq!(v["data"]["processed"].as_i64().unwrap(), 0);
+    assert_eq!(v["data"]["duplicates"].as_i64().unwrap(), 0);
+}
+
+#[test]
+fn event_poll_processes_synthetic_delivered_event_from_stub() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Feed a synthetic delivered email to the stub via env var. The event has
+    // no matching broadcast_recipient, so handle_event records the event row
+    // but does not increment any broadcast counters — that is fine for this
+    // test, which only verifies that event poll → handle_event → event_insert
+    // is wired end-to-end.
+    let stub_response = r#"{"version":"1","status":"success","data":{"object":"list","has_more":false,"data":[{"id":"em_stub_deliver","to":["alice@example.com"],"last_event":"delivered","created_at":"2026-04-08T12:00:00Z","subject":"Hi"}]}}"#;
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_STUB_EMAIL_LIST_JSON", stub_response)
+        .args(["--json", "event", "poll"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["processed"].as_i64().unwrap(), 1);
+    assert_eq!(v["data"]["duplicates"].as_i64().unwrap(), 0);
+
+    // Polling again with the same payload must be idempotent. The cursor was
+    // advanced past em_stub_deliver, but the stub doesn't honour the cursor,
+    // so the same event is offered again — the unique index on
+    // (resend_email_id, type) means it dedupes to a duplicate.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_STUB_EMAIL_LIST_JSON", stub_response)
+        .args(["--json", "event", "poll"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["processed"].as_i64().unwrap(), 0);
+    assert_eq!(v["data"]["duplicates"].as_i64().unwrap(), 1);
+}
+
+#[test]
+fn event_poll_after_broadcast_send_updates_delivered_count_and_report_show() {
+    // End-to-end: seed list/contact/template, send a broadcast through the stub
+    // batch send (which assigns resend_email_id = "em_stub_1"), then feed a
+    // delivered event for em_stub_1 back through `event poll` and verify
+    // the broadcast's delivered_count is incremented and `report show` reports
+    // a sensible CTR / bounce_rate envelope.
+    let (_tmp, config_path, db_path, cache_dir) = seed_broadcast_env();
+
+    // Create + send the broadcast
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args([
+            "--json",
+            "broadcast",
+            "create",
+            "--name",
+            "phase6-report",
+            "--template",
+            "simple_ad",
+            "--to",
+            "list:news",
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .env("MLC_UNSUBSCRIBE_SECRET", "test-secret-long-enough")
+        .args(["--json", "broadcast", "send", "1"]);
+    cmd.assert().success();
+
+    // Feed a delivered event back for the resend_email_id the stub assigned.
+    let stub_response = r#"{"version":"1","status":"success","data":{"object":"list","has_more":false,"data":[{"id":"em_stub_1","to":["alice@example.com"],"last_event":"delivered","created_at":"2026-04-08T12:00:00Z","subject":"Hi"}]}}"#;
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .env("MLC_STUB_EMAIL_LIST_JSON", stub_response)
+        .args(["--json", "event", "poll"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["processed"].as_i64().unwrap(), 1);
+
+    // Verify report show reports the delivered count + sane CTR (zero clicks
+    // means CTR = 0, but the field MUST be present and numeric).
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args(["--json", "report", "show", "1"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["status"], "success");
+    let summary = &v["data"]["summary"];
+    assert_eq!(summary["broadcast_id"].as_i64().unwrap(), 1);
+    assert_eq!(summary["broadcast_name"], "phase6-report");
+    assert_eq!(summary["delivered_count"].as_i64().unwrap(), 1);
+    assert_eq!(summary["bounced_count"].as_i64().unwrap(), 0);
+    assert_eq!(summary["clicked_count"].as_i64().unwrap(), 0);
+    assert!(summary["ctr"].is_number());
+    assert_eq!(summary["ctr"].as_f64().unwrap(), 0.0);
+    assert!(summary["bounce_rate"].is_number());
+    assert_eq!(summary["bounce_rate"].as_f64().unwrap(), 0.0);
+    assert!(summary["complaint_rate"].is_number());
+    assert!(summary["open_rate"].is_number());
+}
+
+#[test]
+fn report_show_for_nonexistent_broadcast_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "report", "show", "999"]);
+    let assert = cmd.assert().failure().code(3);
+    // Errors are written to stderr, not stdout.
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stderr).unwrap();
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["error"]["code"], "broadcast_not_found");
+}
+
+#[test]
+fn report_links_for_broadcast_with_no_clicks_returns_empty_array() {
+    let (_tmp, config_path, db_path, cache_dir) = seed_broadcast_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args([
+            "--json",
+            "broadcast",
+            "create",
+            "--name",
+            "no-clicks",
+            "--template",
+            "simple_ad",
+            "--to",
+            "list:news",
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args(["--json", "report", "links", "1"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["status"], "success");
+    assert_eq!(v["data"]["links"].as_array().unwrap().len(), 0);
+    assert_eq!(v["data"]["total_clicks"].as_i64().unwrap(), 0);
+}
+
+#[test]
+fn report_deliverability_returns_zero_metrics_on_empty_db() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "report", "deliverability", "--days", "30"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["status"], "success");
+    let report = &v["data"]["report"];
+    assert_eq!(report["window_days"].as_i64().unwrap(), 30);
+    assert_eq!(report["total_sent"].as_i64().unwrap(), 0);
+    assert_eq!(report["bounce_rate"].as_f64().unwrap(), 0.0);
+    assert_eq!(report["complaint_rate"].as_f64().unwrap(), 0.0);
+    assert_eq!(report["verified_domains"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn report_engagement_returns_zero_on_empty_db() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "report", "engagement", "--days", "7"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["status"], "success");
+    assert_eq!(v["data"]["target"], "all");
+    assert_eq!(v["data"]["days"].as_i64().unwrap(), 7);
+    assert_eq!(v["data"]["opens"].as_i64().unwrap(), 0);
+    assert_eq!(v["data"]["clicks"].as_i64().unwrap(), 0);
+    assert_eq!(v["data"]["engagement_score"].as_i64().unwrap(), 0);
+}
+
+#[test]
+fn webhook_test_to_closed_port_fails() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "webhook",
+            "test",
+            "--to",
+            "http://127.0.0.1:1", // guaranteed-closed port
+            "--event",
+            "delivered",
+        ]);
+    // curl will fail to connect to a closed port; we just assert non-success.
+    cmd.assert().failure();
+}
+
+#[test]
+fn webhook_test_unknown_event_type_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "webhook",
+            "test",
+            "--to",
+            "http://127.0.0.1:1",
+            "--event",
+            "definitely-not-a-real-event",
+        ]);
+    cmd.assert().failure().code(3);
+}

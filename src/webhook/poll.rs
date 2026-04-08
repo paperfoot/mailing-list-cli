@@ -20,11 +20,7 @@ pub struct PollResult {
     pub latest_cursor: Option<String>,
 }
 
-pub fn poll_events(
-    db: &Db,
-    cli: &EmailCli,
-    reset_cursor: bool,
-) -> Result<PollResult, AppError> {
+pub fn poll_events(db: &Db, cli: &EmailCli, reset_cursor: bool) -> Result<PollResult, AppError> {
     if reset_cursor {
         db.kv_set(CURSOR_KEY, "")?;
     }

@@ -19,8 +19,13 @@ pub fn handle_event(db: &Db, ev: &ResendEvent) -> Result<HandleOutcome, AppError
     };
 
     // Idempotent insert into event table
-    let inserted =
-        db.event_insert(event_type, &email_id, broadcast_id, contact_id, &payload_json)?;
+    let inserted = db.event_insert(
+        event_type,
+        &email_id,
+        broadcast_id,
+        contact_id,
+        &payload_json,
+    )?;
     if !inserted {
         return Ok(HandleOutcome::Duplicate);
     }

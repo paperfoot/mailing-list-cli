@@ -275,6 +275,106 @@ impl Db {
             .map_err(query_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
+
+    // ─── Tag operations ────────────────────────────────────────────────
+
+    #[allow(dead_code)] // Wired up in Task 8
+    pub fn tag_get_or_create(&self, name: &str) -> Result<i64, AppError> {
+        if let Some(id) = self.tag_find(name)? {
+            return Ok(id);
+        }
+        self.conn
+            .execute("INSERT INTO tag (name) VALUES (?1)", params![name])
+            .map_err(query_err)?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)] // Wired up in Task 8/9
+    pub fn tag_find(&self, name: &str) -> Result<Option<i64>, AppError> {
+        match self
+            .conn
+            .query_row("SELECT id FROM tag WHERE name = ?1", params![name], |r| {
+                r.get::<_, i64>(0)
+            }) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    #[allow(dead_code)] // Wired up in Task 8
+    pub fn tag_all(&self) -> Result<Vec<crate::models::Tag>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT t.id, t.name,
+                        COALESCE((SELECT COUNT(*) FROM contact_tag ct WHERE ct.tag_id = t.id), 0)
+                 FROM tag t
+                 ORDER BY t.name ASC",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::models::Tag {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    member_count: row.get(2)?,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+
+    #[allow(dead_code)] // Wired up in Task 8
+    pub fn tag_delete(&self, name: &str) -> Result<bool, AppError> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM tag WHERE name = ?1", params![name])
+            .map_err(query_err)?;
+        Ok(affected > 0)
+    }
+
+    #[allow(dead_code)] // Wired up in Task 9
+    pub fn contact_tag_add(&self, contact_id: i64, tag_id: i64) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO contact_tag (contact_id, tag_id, applied_at)
+                 VALUES (?1, ?2, ?3)",
+                params![contact_id, tag_id, now],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)] // Wired up in Task 9
+    pub fn contact_tag_remove(&self, contact_id: i64, tag_id: i64) -> Result<bool, AppError> {
+        let affected = self
+            .conn
+            .execute(
+                "DELETE FROM contact_tag WHERE contact_id = ?1 AND tag_id = ?2",
+                params![contact_id, tag_id],
+            )
+            .map_err(query_err)?;
+        Ok(affected > 0)
+    }
+
+    #[allow(dead_code)] // Used by tests; kept for future contact-detail commands
+    pub fn contact_tags_for(&self, contact_id: i64) -> Result<Vec<String>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT t.name FROM contact_tag ct
+                 JOIN tag t ON ct.tag_id = t.id
+                 WHERE ct.contact_id = ?1
+                 ORDER BY t.name",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map(params![contact_id], |r| r.get::<_, String>(0))
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
 }
 
 fn query_err(e: rusqlite::Error) -> AppError {
@@ -385,5 +485,57 @@ mod tests {
         // member_count reflects the additions
         let list = db.list_get_by_id(list_id).unwrap().unwrap();
         assert_eq!(list.member_count, 2);
+    }
+
+    #[test]
+    fn tag_get_or_create_is_idempotent() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let id1 = db.tag_get_or_create("vip").unwrap();
+        let id2 = db.tag_get_or_create("vip").unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn tag_all_sorts_by_name_with_counts() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.tag_get_or_create("vip").unwrap();
+        db.tag_get_or_create("abandoned").unwrap();
+        let tags = db.tag_all().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].name, "abandoned");
+        assert_eq!(tags[1].name, "vip");
+        assert_eq!(tags[0].member_count, 0);
+    }
+
+    #[test]
+    fn contact_tag_add_and_remove_round_trip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let contact = db.contact_upsert("alice@example.com", None, None).unwrap();
+        let tag = db.tag_get_or_create("vip").unwrap();
+        db.contact_tag_add(contact, tag).unwrap();
+        assert_eq!(
+            db.contact_tags_for(contact).unwrap(),
+            vec!["vip".to_string()]
+        );
+        // Idempotent add
+        db.contact_tag_add(contact, tag).unwrap();
+        assert_eq!(db.contact_tags_for(contact).unwrap().len(), 1);
+        // Remove
+        assert!(db.contact_tag_remove(contact, tag).unwrap());
+        assert!(db.contact_tags_for(contact).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tag_delete_cascades_to_contact_tag() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let contact = db.contact_upsert("alice@example.com", None, None).unwrap();
+        let tag_id = db.tag_get_or_create("vip").unwrap();
+        db.contact_tag_add(contact, tag_id).unwrap();
+        assert!(db.tag_delete("vip").unwrap());
+        assert!(db.contact_tags_for(contact).unwrap().is_empty());
     }
 }

@@ -19,3 +19,11 @@ pub struct Contact {
     pub status: String,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)] // Wired up in Task 8
+pub struct Tag {
+    pub id: i64,
+    pub name: String,
+    pub member_count: i64,
+}

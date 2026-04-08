@@ -901,6 +901,110 @@ impl Db {
             .map_err(query_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
+
+    // ─── Template operations ───────────────────────────────────────────
+
+    #[allow(dead_code)] // wired into commands::template in Task 6
+    pub fn template_upsert(
+        &self,
+        name: &str,
+        subject: &str,
+        mjml_source: &str,
+        schema_json: &str,
+    ) -> Result<i64, AppError> {
+        if !is_snake_case(name) {
+            return Err(AppError::BadInput {
+                code: "invalid_template_name".into(),
+                message: format!("template name '{name}' must be snake_case"),
+                suggestion:
+                    "Use lowercase letters, digits, and underscores only (e.g. `welcome_email`)"
+                        .into(),
+            });
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        // If a template with this name exists, UPDATE; else INSERT.
+        let existing = self.template_get_by_name(name)?;
+        if let Some(t) = existing {
+            self.conn
+                .execute(
+                    "UPDATE template SET subject = ?1, mjml_source = ?2, schema_json = ?3, updated_at = ?4 WHERE id = ?5",
+                    params![subject, mjml_source, schema_json, now, t.id],
+                )
+                .map_err(query_err)?;
+            Ok(t.id)
+        } else {
+            self.conn
+                .execute(
+                    "INSERT INTO template (name, subject, mjml_source, schema_json, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                    params![name, subject, mjml_source, schema_json, now],
+                )
+                .map_err(query_err)?;
+            Ok(self.conn.last_insert_rowid())
+        }
+    }
+
+    #[allow(dead_code)] // wired into commands::template in Task 6
+    pub fn template_all(&self) -> Result<Vec<crate::models::Template>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, subject, mjml_source, schema_json, created_at, updated_at
+                 FROM template ORDER BY name ASC",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::models::Template {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    subject: row.get(2)?,
+                    mjml_source: row.get(3)?,
+                    schema_json: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+
+    #[allow(dead_code)] // wired into commands::template in Task 6
+    pub fn template_get_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::models::Template>, AppError> {
+        let row = self.conn.query_row(
+            "SELECT id, name, subject, mjml_source, schema_json, created_at, updated_at
+             FROM template WHERE name = ?1",
+            params![name],
+            |row| {
+                Ok(crate::models::Template {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    subject: row.get(2)?,
+                    mjml_source: row.get(3)?,
+                    schema_json: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        );
+        match row {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    #[allow(dead_code)] // wired into commands::template in Task 6
+    pub fn template_delete(&self, name: &str) -> Result<bool, AppError> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM template WHERE name = ?1", params![name])
+            .map_err(query_err)?;
+        Ok(affected > 0)
+    }
 }
 
 /// Stored consent record for a contact. Both fields may be `None` if
@@ -1262,6 +1366,50 @@ mod tests {
         assert_eq!(
             db.segment_create("a", "{}").unwrap_err().code(),
             "segment_already_exists"
+        );
+    }
+
+    #[test]
+    fn template_crud_round_trip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let id = db
+            .template_upsert("welcome", "Hi", "<mjml></mjml>", "{}")
+            .unwrap();
+        assert!(id > 0);
+        let fetched = db.template_get_by_name("welcome").unwrap().unwrap();
+        assert_eq!(fetched.subject, "Hi");
+
+        // Upsert updates the existing row
+        let id2 = db
+            .template_upsert("welcome", "Hello", "<mjml></mjml>", "{}")
+            .unwrap();
+        assert_eq!(id, id2);
+        let updated = db.template_get_by_name("welcome").unwrap().unwrap();
+        assert_eq!(updated.subject, "Hello");
+
+        let all = db.template_all().unwrap();
+        assert_eq!(all.len(), 1);
+
+        assert!(db.template_delete("welcome").unwrap());
+        assert!(db.template_get_by_name("welcome").unwrap().is_none());
+    }
+
+    #[test]
+    fn template_rejects_non_snake_case_name() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        assert!(
+            db.template_upsert("WelcomeEmail", "Hi", "<mjml></mjml>", "{}")
+                .is_err()
+        );
+        assert!(
+            db.template_upsert("welcome-email", "Hi", "<mjml></mjml>", "{}")
+                .is_err()
+        );
+        assert!(
+            db.template_upsert("welcome_email", "Hi", "<mjml></mjml>", "{}")
+                .is_ok()
         );
     }
 }

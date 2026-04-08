@@ -44,3 +44,15 @@ pub struct Segment {
     pub created_at: String,
     pub member_count: i64,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)] // fields consumed by template command in Task 6
+pub struct Template {
+    pub id: i64,
+    pub name: String,
+    pub subject: String,
+    pub mjml_source: String,
+    pub schema_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}

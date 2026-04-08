@@ -55,3 +55,36 @@ pub struct Template {
     pub created_at: String,
     pub updated_at: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
+pub struct Broadcast {
+    pub id: i64,
+    pub name: String,
+    pub template_id: i64,
+    pub target_kind: String, // "list" | "segment"
+    pub target_id: i64,
+    pub status: String, // draft/scheduled/sending/sent/cancelled/failed
+    pub scheduled_at: Option<String>,
+    pub sent_at: Option<String>,
+    pub created_at: String,
+    pub recipient_count: i64,
+    pub delivered_count: i64,
+    pub bounced_count: i64,
+    pub opened_count: i64,
+    pub clicked_count: i64,
+    pub unsubscribed_count: i64,
+    pub complained_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
+pub struct BroadcastRecipient {
+    pub id: i64,
+    pub broadcast_id: i64,
+    pub contact_id: i64,
+    pub resend_email_id: Option<String>,
+    pub status: String, // pending/sent/delivered/bounced/complained/failed/suppressed
+    pub sent_at: Option<String>,
+    pub last_event_at: Option<String>,
+}

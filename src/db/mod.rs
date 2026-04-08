@@ -1001,6 +1001,258 @@ impl Db {
             .map_err(query_err)?;
         Ok(affected > 0)
     }
+
+    // ─── Broadcast operations ──────────────────────────────────────────
+
+    #[allow(dead_code)]
+    pub fn broadcast_create(
+        &self,
+        name: &str,
+        template_id: i64,
+        target_kind: &str,
+        target_id: i64,
+    ) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO broadcast (name, template_id, target_kind, target_id, status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'draft', ?5)",
+                params![name, template_id, target_kind, target_id, now],
+            )
+            .map_err(query_err)?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_all(
+        &self,
+        status_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::models::Broadcast>, AppError> {
+        let (sql, has_status) = if status_filter.is_some() {
+            (
+                "SELECT id, name, template_id, target_kind, target_id, status, scheduled_at, sent_at, created_at,
+                        recipient_count, delivered_count, bounced_count, opened_count, clicked_count,
+                        unsubscribed_count, complained_count
+                 FROM broadcast WHERE status = ?1 ORDER BY id DESC LIMIT ?2",
+                true,
+            )
+        } else {
+            (
+                "SELECT id, name, template_id, target_kind, target_id, status, scheduled_at, sent_at, created_at,
+                        recipient_count, delivered_count, bounced_count, opened_count, clicked_count,
+                        unsubscribed_count, complained_count
+                 FROM broadcast ORDER BY id DESC LIMIT ?1",
+                false,
+            )
+        };
+        let mut stmt = self.conn.prepare(sql).map_err(query_err)?;
+
+        let row_mapper = |row: &rusqlite::Row| {
+            Ok(crate::models::Broadcast {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                template_id: row.get(2)?,
+                target_kind: row.get(3)?,
+                target_id: row.get(4)?,
+                status: row.get(5)?,
+                scheduled_at: row.get(6)?,
+                sent_at: row.get(7)?,
+                created_at: row.get(8)?,
+                recipient_count: row.get(9)?,
+                delivered_count: row.get(10)?,
+                bounced_count: row.get(11)?,
+                opened_count: row.get(12)?,
+                clicked_count: row.get(13)?,
+                unsubscribed_count: row.get(14)?,
+                complained_count: row.get(15)?,
+            })
+        };
+
+        let rows: Vec<crate::models::Broadcast> = if has_status {
+            stmt.query_map(params![status_filter.unwrap(), limit as i64], row_mapper)
+                .map_err(query_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(query_err)?
+        } else {
+            stmt.query_map(params![limit as i64], row_mapper)
+                .map_err(query_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(query_err)?
+        };
+        Ok(rows)
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_get(&self, id: i64) -> Result<Option<crate::models::Broadcast>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, template_id, target_kind, target_id, status, scheduled_at, sent_at, created_at,
+                        recipient_count, delivered_count, bounced_count, opened_count, clicked_count,
+                        unsubscribed_count, complained_count
+                 FROM broadcast WHERE id = ?1",
+            )
+            .map_err(query_err)?;
+        let row = stmt.query_row(params![id], |row| {
+            Ok(crate::models::Broadcast {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                template_id: row.get(2)?,
+                target_kind: row.get(3)?,
+                target_id: row.get(4)?,
+                status: row.get(5)?,
+                scheduled_at: row.get(6)?,
+                sent_at: row.get(7)?,
+                created_at: row.get(8)?,
+                recipient_count: row.get(9)?,
+                delivered_count: row.get(10)?,
+                bounced_count: row.get(11)?,
+                opened_count: row.get(12)?,
+                clicked_count: row.get(13)?,
+                unsubscribed_count: row.get(14)?,
+                complained_count: row.get(15)?,
+            })
+        });
+        match row {
+            Ok(b) => Ok(Some(b)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_set_status(
+        &self,
+        id: i64,
+        status: &str,
+        sent_at: Option<&str>,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE broadcast SET status = ?1, sent_at = COALESCE(?2, sent_at) WHERE id = ?3",
+                params![status, sent_at, id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_set_scheduled(&self, id: i64, scheduled_at: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE broadcast SET status = 'scheduled', scheduled_at = ?1 WHERE id = ?2",
+                params![scheduled_at, id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_update_counts(&self, id: i64, recipient_count: i64) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE broadcast SET recipient_count = ?1 WHERE id = ?2",
+                params![recipient_count, id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    // ─── Broadcast recipient operations ────────────────────────────────
+
+    #[allow(dead_code)]
+    pub fn broadcast_recipient_insert(
+        &self,
+        broadcast_id: i64,
+        contact_id: i64,
+        status: &str,
+    ) -> Result<i64, AppError> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO broadcast_recipient (broadcast_id, contact_id, status)
+                 VALUES (?1, ?2, ?3)",
+                params![broadcast_id, contact_id, status],
+            )
+            .map_err(query_err)?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_recipient_mark_sent(
+        &self,
+        broadcast_id: i64,
+        contact_id: i64,
+        resend_email_id: &str,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE broadcast_recipient
+                 SET status = 'sent', resend_email_id = ?1, sent_at = ?2
+                 WHERE broadcast_id = ?3 AND contact_id = ?4",
+                params![resend_email_id, now, broadcast_id, contact_id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn broadcast_recipient_count_by_status(
+        &self,
+        broadcast_id: i64,
+        status: &str,
+    ) -> Result<i64, AppError> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM broadcast_recipient WHERE broadcast_id = ?1 AND status = ?2",
+                params![broadcast_id, status],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        Ok(count)
+    }
+
+    /// Check if an email is on the global suppression list.
+    #[allow(dead_code)]
+    pub fn is_email_suppressed(&self, email: &str) -> Result<bool, AppError> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM suppression WHERE email = ?1 COLLATE NOCASE",
+                params![email],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        Ok(count > 0)
+    }
+
+    /// Resolve a segment by its primary key id.
+    #[allow(dead_code)]
+    pub fn segment_get_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<crate::models::Segment>, AppError> {
+        let row = self.conn.query_row(
+            "SELECT id, name, filter_json, created_at FROM segment WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(crate::models::Segment {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    filter_json: row.get(2)?,
+                    created_at: row.get(3)?,
+                    member_count: 0,
+                })
+            },
+        );
+        match row {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
 }
 
 /// Stored consent record for a contact. Both fields may be `None` if
@@ -1407,5 +1659,66 @@ mod tests {
             db.template_upsert("welcome_email", "Hi", "<mjml></mjml>", "{}")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn broadcast_crud_round_trip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        // Need a template to satisfy FK
+        let tid = db.template_upsert("t", "Hi", "<mjml></mjml>", "{}").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+
+        let bid = db.broadcast_create("Q1", tid, "list", list_id).unwrap();
+        assert!(bid > 0);
+        let b = db.broadcast_get(bid).unwrap().unwrap();
+        assert_eq!(b.name, "Q1");
+        assert_eq!(b.status, "draft");
+
+        db.broadcast_set_status(bid, "sending", None).unwrap();
+        db.broadcast_set_status(bid, "sent", Some("2026-04-08T12:00:00Z"))
+            .unwrap();
+        let b = db.broadcast_get(bid).unwrap().unwrap();
+        assert_eq!(b.status, "sent");
+        assert_eq!(b.sent_at.as_deref(), Some("2026-04-08T12:00:00Z"));
+
+        let all = db.broadcast_all(None, 100).unwrap();
+        assert_eq!(all.len(), 1);
+        let sent = db.broadcast_all(Some("sent"), 100).unwrap();
+        assert_eq!(sent.len(), 1);
+        let draft = db.broadcast_all(Some("draft"), 100).unwrap();
+        assert_eq!(draft.len(), 0);
+    }
+
+    #[test]
+    fn broadcast_recipient_crud() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "Hi", "<mjml></mjml>", "{}").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+        let bid = db.broadcast_create("Q1", tid, "list", list_id).unwrap();
+        let cid = db.contact_upsert("alice@example.com", None, None).unwrap();
+
+        db.broadcast_recipient_insert(bid, cid, "pending").unwrap();
+        db.broadcast_recipient_mark_sent(bid, cid, "em_abc").unwrap();
+        assert_eq!(
+            db.broadcast_recipient_count_by_status(bid, "sent").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn suppression_read_check() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO suppression (email, reason, suppressed_at) VALUES ('blocked@example.com', 'hard_bounced', '2026-01-01')",
+                [],
+            )
+            .unwrap();
+        assert!(db.is_email_suppressed("blocked@example.com").unwrap());
+        assert!(db.is_email_suppressed("BLOCKED@example.com").unwrap()); // COLLATE NOCASE
+        assert!(!db.is_email_suppressed("alice@example.com").unwrap());
     }
 }

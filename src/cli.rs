@@ -104,6 +104,8 @@ pub enum ContactAction {
     Tag(ContactTagArgs),
     /// Remove a tag from a contact
     Untag(ContactTagArgs),
+    /// Set a custom field value on a contact
+    Set(ContactSetArgs),
 }
 
 #[derive(Args, Debug)]
@@ -127,6 +129,9 @@ pub struct ContactAddArgs {
     /// Last name
     #[arg(long)]
     pub last_name: Option<String>,
+    /// Set a custom field value in `key=val` form; repeatable
+    #[arg(long = "field", value_name = "KEY=VAL")]
+    pub fields: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -187,6 +192,16 @@ pub struct FieldRmArgs {
     /// Explicit confirmation (required)
     #[arg(long)]
     pub confirm: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ContactSetArgs {
+    /// Contact email
+    pub email: String,
+    /// Field key
+    pub field: String,
+    /// Field value (coerced to the field's declared type)
+    pub value: String,
 }
 
 #[derive(Subcommand, Debug)]

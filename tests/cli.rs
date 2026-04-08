@@ -428,3 +428,86 @@ fn field_create_select_with_options_succeeds() {
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
     assert_eq!(v["data"]["field"]["options"][1], "pro");
 }
+
+#[test]
+fn contact_set_with_typed_field_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // list + contact + field
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+        ]);
+    cmd.assert().success();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "create", "age", "--type", "number"]);
+    cmd.assert().success();
+
+    // set numeric value
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "set", "alice@example.com", "age", "42"]);
+    cmd.assert().success();
+
+    // rejecting non-numeric value
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "set",
+            "alice@example.com",
+            "age",
+            "old",
+        ]);
+    cmd.assert().failure().code(3);
+}
+
+#[test]
+fn contact_add_with_field_flags() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "field", "create", "company", "--type", "text"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+            "--field",
+            "company=Acme",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["fields_set"], 1);
+}

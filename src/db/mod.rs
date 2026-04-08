@@ -495,7 +495,6 @@ impl Db {
     /// Coerce a string input into the correct typed column based on the
     /// field definition. Returns a `TypedFieldValue` or a `BadInput` error
     /// with an agent-friendly message.
-    #[allow(dead_code)] // Wired up in Task 13
     pub fn coerce_field_value(
         &self,
         field: &crate::models::Field,
@@ -565,7 +564,6 @@ impl Db {
 
     /// Write a typed value to `contact_field_value`. INSERT OR REPLACE so the
     /// caller doesn't need to check existence first.
-    #[allow(dead_code)] // Wired up in Task 13
     pub fn contact_field_upsert(
         &self,
         contact_id: i64,
@@ -590,7 +588,7 @@ impl Db {
     }
 
     /// Fetch all field values for a contact, returned as (key, display_string).
-    #[allow(dead_code)] // Wired up in Task 13/14
+    #[allow(dead_code)] // Wired up in Task 14
     pub fn contact_fields_for(&self, contact_id: i64) -> Result<Vec<(String, String)>, AppError> {
         let mut stmt = self
             .conn
@@ -627,7 +625,6 @@ impl Db {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Wired up in Task 13
 pub enum TypedFieldValue {
     Text(String),
     Number(f64),

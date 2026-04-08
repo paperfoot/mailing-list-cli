@@ -16,6 +16,7 @@ pub fn run(format: Format, action: ContactAction) -> Result<(), AppError> {
         ContactAction::List(args) => list_contacts(format, &db, args),
         ContactAction::Tag(args) => tag_contact(format, &db, args),
         ContactAction::Untag(args) => untag_contact(format, &db, args),
+        ContactAction::Set(args) => set_field(format, &db, args),
     }
 }
 
@@ -26,6 +27,26 @@ fn add(format: Format, db: &Db, cli: &EmailCli, args: ContactAddArgs) -> Result<
             message: format!("'{}' is not a valid email address", args.email),
             suggestion: "Provide an email in the form local@domain".into(),
         });
+    }
+
+    // Parse --field key=val pairs into a validated (field, typed_value) list
+    // BEFORE doing any DB writes. Fail fast on any coercion error.
+    let mut typed_fields: Vec<(crate::models::Field, crate::db::TypedFieldValue)> = Vec::new();
+    for pair in &args.fields {
+        let (k, v) = pair.split_once('=').ok_or_else(|| AppError::BadInput {
+            code: "invalid_field_arg".into(),
+            message: format!("--field '{pair}' is not in key=val form"),
+            suggestion: "Use `--field company=Acme`".into(),
+        })?;
+        let field = db.field_get(k)?.ok_or_else(|| AppError::BadInput {
+            code: "field_not_found".into(),
+            message: format!("no field named '{k}'"),
+            suggestion: format!(
+                "Create the field first with `mailing-list-cli field create {k} --type text`"
+            ),
+        })?;
+        let typed = db.coerce_field_value(&field, v)?;
+        typed_fields.push((field, typed));
     }
 
     let list = db
@@ -43,7 +64,12 @@ fn add(format: Format, db: &Db, cli: &EmailCli, args: ContactAddArgs) -> Result<
         args.last_name.as_deref(),
     )?;
 
-    // 2. Mirror to the Resend contact store (flat /contacts) and add to the
+    // 2. Write custom field values
+    for (field, typed) in &typed_fields {
+        db.contact_field_upsert(contact_id, field.id, typed)?;
+    }
+
+    // 3. Mirror to the Resend contact store (flat /contacts) and add to the
     //    list's backing segment in one call via --segments.
     cli.contact_create(
         &args.email,
@@ -53,7 +79,7 @@ fn add(format: Format, db: &Db, cli: &EmailCli, args: ContactAddArgs) -> Result<
         None,
     )?;
 
-    // 3. Wire up the local list_membership row
+    // 4. Wire up the local list_membership row
     db.contact_add_to_list(contact_id, list.id)?;
 
     output::success(
@@ -63,7 +89,33 @@ fn add(format: Format, db: &Db, cli: &EmailCli, args: ContactAddArgs) -> Result<
             "contact_id": contact_id,
             "email": args.email,
             "list_id": list.id,
-            "list_name": list.name
+            "list_name": list.name,
+            "fields_set": typed_fields.len()
+        }),
+    );
+    Ok(())
+}
+
+fn set_field(format: Format, db: &Db, args: crate::cli::ContactSetArgs) -> Result<(), AppError> {
+    let contact_id = contact_id_or_fail(db, &args.email)?;
+    let field =
+        db.field_get(&args.field)?
+            .ok_or_else(|| AppError::BadInput {
+                code: "field_not_found".into(),
+                message: format!("no field named '{}'", args.field),
+                suggestion:
+                    "Run `mailing-list-cli field ls`; create the field with `field create` first"
+                        .into(),
+            })?;
+    let typed = db.coerce_field_value(&field, &args.value)?;
+    db.contact_field_upsert(contact_id, field.id, &typed)?;
+    output::success(
+        format,
+        &format!("{}.{} = {}", args.email, args.field, args.value),
+        json!({
+            "email": args.email,
+            "field": args.field,
+            "value": args.value
         }),
     );
     Ok(())

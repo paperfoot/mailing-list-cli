@@ -73,7 +73,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.2.1 — real-Resend validated against paperfoot.com; broadcast send marks 'failed' on render error instead of leaking 'sending' state"
+        "status": "v0.2.2 — real-Resend validated; broadcast state fix; race-free env-var tests; CI pinned to --test-threads=1"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

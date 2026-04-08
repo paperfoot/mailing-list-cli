@@ -1,6 +1,6 @@
 [package]
 name = "mailing-list-cli"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Newsletter and mailing list management from the terminal. Built for AI agents on top of email-cli."

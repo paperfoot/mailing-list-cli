@@ -7,6 +7,7 @@ mod error;
 mod models;
 mod output;
 mod paths;
+mod segment;
 
 use clap::Parser;
 use cli::{Cli, Command};

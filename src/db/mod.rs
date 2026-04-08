@@ -245,6 +245,18 @@ impl Db {
         Ok(())
     }
 
+    pub fn contact_find_id(&self, email: &str) -> Result<Option<i64>, AppError> {
+        match self.conn.query_row(
+            "SELECT id FROM contact WHERE email = ?1 COLLATE NOCASE",
+            params![email],
+            |r| r.get::<_, i64>(0),
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
     pub fn contact_list_in_list(
         &self,
         list_id: i64,
@@ -278,7 +290,6 @@ impl Db {
 
     // ─── Tag operations ────────────────────────────────────────────────
 
-    #[allow(dead_code)] // Wired up in Task 8
     pub fn tag_get_or_create(&self, name: &str) -> Result<i64, AppError> {
         if let Some(id) = self.tag_find(name)? {
             return Ok(id);
@@ -289,7 +300,6 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)] // Wired up in Task 8/9
     pub fn tag_find(&self, name: &str) -> Result<Option<i64>, AppError> {
         match self
             .conn
@@ -302,7 +312,6 @@ impl Db {
         }
     }
 
-    #[allow(dead_code)] // Wired up in Task 8
     pub fn tag_all(&self) -> Result<Vec<crate::models::Tag>, AppError> {
         let mut stmt = self
             .conn
@@ -325,7 +334,6 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
 
-    #[allow(dead_code)] // Wired up in Task 8
     pub fn tag_delete(&self, name: &str) -> Result<bool, AppError> {
         let affected = self
             .conn
@@ -334,7 +342,6 @@ impl Db {
         Ok(affected > 0)
     }
 
-    #[allow(dead_code)] // Wired up in Task 9
     pub fn contact_tag_add(&self, contact_id: i64, tag_id: i64) -> Result<(), AppError> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
@@ -347,7 +354,6 @@ impl Db {
         Ok(())
     }
 
-    #[allow(dead_code)] // Wired up in Task 9
     pub fn contact_tag_remove(&self, contact_id: i64, tag_id: i64) -> Result<bool, AppError> {
         let affected = self
             .conn

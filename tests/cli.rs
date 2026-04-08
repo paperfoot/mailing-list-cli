@@ -290,3 +290,69 @@ fn tag_rm_without_confirm_fails() {
         .args(["--json", "tag", "rm", "vip"]);
     cmd.assert().failure().code(3);
 }
+
+#[test]
+fn contact_tag_and_untag_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // seed: list + contact
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+        ]);
+    cmd.assert().success();
+
+    // tag
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "tag", "alice@example.com", "vip"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["tag"], "vip");
+
+    // tag ls must show 1 member
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "tag", "ls"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+    assert_eq!(v["data"]["tags"][0]["member_count"], 1);
+
+    // untag
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "untag", "alice@example.com", "vip"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["removed"], true);
+}
+
+#[test]
+fn contact_tag_on_missing_contact_fails_with_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "tag", "ghost@example.com", "vip"]);
+    cmd.assert().failure().code(3);
+}

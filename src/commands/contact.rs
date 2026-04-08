@@ -14,6 +14,8 @@ pub fn run(format: Format, action: ContactAction) -> Result<(), AppError> {
     match action {
         ContactAction::Add(args) => add(format, &db, &cli, args),
         ContactAction::List(args) => list_contacts(format, &db, args),
+        ContactAction::Tag(args) => tag_contact(format, &db, args),
+        ContactAction::Untag(args) => untag_contact(format, &db, args),
     }
 }
 
@@ -99,6 +101,67 @@ fn is_valid_email(s: &str) -> bool {
         && !parts[1].is_empty()
         && !s.contains(' ')
         && parts[1].contains('.')
+}
+
+fn tag_contact(format: Format, db: &Db, args: crate::cli::ContactTagArgs) -> Result<(), AppError> {
+    let contact_id = contact_id_or_fail(db, &args.email)?;
+    let tag_id = db.tag_get_or_create(&args.tag)?;
+    db.contact_tag_add(contact_id, tag_id)?;
+    output::success(
+        format,
+        &format!("tagged {} with '{}'", args.email, args.tag),
+        json!({
+            "email": args.email,
+            "tag": args.tag,
+            "contact_id": contact_id
+        }),
+    );
+    Ok(())
+}
+
+fn untag_contact(
+    format: Format,
+    db: &Db,
+    args: crate::cli::ContactTagArgs,
+) -> Result<(), AppError> {
+    let contact_id = contact_id_or_fail(db, &args.email)?;
+    let tag_id = match db.tag_find(&args.tag)? {
+        Some(id) => id,
+        None => {
+            return Err(AppError::BadInput {
+                code: "tag_not_found".into(),
+                message: format!("no tag named '{}'", args.tag),
+                suggestion: "Run `mailing-list-cli tag ls` to see all tags".into(),
+            });
+        }
+    };
+    let removed = db.contact_tag_remove(contact_id, tag_id)?;
+    output::success(
+        format,
+        &format!(
+            "{} tag '{}' from {}",
+            if removed { "removed" } else { "no-op;" },
+            args.tag,
+            args.email
+        ),
+        json!({
+            "email": args.email,
+            "tag": args.tag,
+            "removed": removed
+        }),
+    );
+    Ok(())
+}
+
+/// Look up a contact by email, return exit 3 if missing.
+fn contact_id_or_fail(db: &Db, email: &str) -> Result<i64, AppError> {
+    db.contact_find_id(email)?
+        .ok_or_else(|| AppError::BadInput {
+            code: "contact_not_found".into(),
+            message: format!("no contact with email '{email}'"),
+            suggestion: "Run `mailing-list-cli contact ls --list <id>` to find existing contacts"
+                .into(),
+        })
 }
 
 #[cfg(test)]

@@ -95,11 +95,23 @@ pub struct ListShowArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ContactAction {
-    /// Add a contact to a list (also writes through to the Resend audience)
+    /// Add a contact to a list (also writes through to the Resend segment)
     Add(ContactAddArgs),
     /// List contacts in a list
     #[command(visible_alias = "ls")]
     List(ContactListArgs),
+    /// Apply a tag to a contact
+    Tag(ContactTagArgs),
+    /// Remove a tag from a contact
+    Untag(ContactTagArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ContactTagArgs {
+    /// Contact email
+    pub email: String,
+    /// Tag name
+    pub tag: String,
 }
 
 #[derive(Args, Debug)]

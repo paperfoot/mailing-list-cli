@@ -37,7 +37,6 @@ pub struct Field {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)] // consumed by Task 16 segment commands
 pub struct Segment {
     pub id: i64,
     pub name: String,

@@ -565,3 +565,98 @@ fn contact_show_on_missing_email_fails_with_exit_3() {
         .args(["--json", "contact", "show", "ghost@example.com"]);
     cmd.assert().failure().code(3);
 }
+
+#[test]
+fn segment_create_list_show_members_round_trip() {
+    let (_tmp, config_path, db_path) = stub_env();
+
+    // Seed: list, contact, tag
+    for args in [
+        vec!["--json", "list", "create", "news"],
+        vec![
+            "--json",
+            "contact",
+            "add",
+            "alice@example.com",
+            "--list",
+            "1",
+        ],
+        vec!["--json", "contact", "tag", "alice@example.com", "vip"],
+    ] {
+        let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+        cmd.env("MLC_CONFIG_PATH", &config_path)
+            .env("MLC_DB_PATH", &db_path)
+            .args(&args);
+        cmd.assert().success();
+    }
+
+    // Create segment
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "create", "vips", "--filter", "tag:vip"]);
+    cmd.assert().success();
+
+    // List
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "ls"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["count"], 1);
+    assert_eq!(v["data"]["segments"][0]["member_count"], 1);
+
+    // Show
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "show", "vips"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["member_count"], 1);
+    assert_eq!(v["data"]["sample"][0]["email"], "alice@example.com");
+
+    // Members
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "members", "vips"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["contacts"][0]["email"], "alice@example.com");
+
+    // Rm without --confirm fails
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "rm", "vips"]);
+    cmd.assert().failure().code(3);
+
+    // Rm with --confirm succeeds
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "segment", "rm", "vips", "--confirm"]);
+    cmd.assert().success();
+}
+
+#[test]
+fn segment_create_with_invalid_filter_returns_exit_3() {
+    let (_tmp, config_path, db_path) = stub_env();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "segment",
+            "create",
+            "bad",
+            "--filter",
+            "((unclosed",
+        ]);
+    cmd.assert().failure().code(3);
+}

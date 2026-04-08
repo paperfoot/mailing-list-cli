@@ -214,7 +214,45 @@ pub struct ContactShowArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum SegmentAction {
-    /// Placeholder — full impl in Task 19
+    /// Save a dynamic segment (a filter expression)
+    Create(SegmentCreateArgs),
+    /// List all segments
     #[command(visible_alias = "ls")]
     List,
+    /// Show a segment's filter + sample members
+    Show(SegmentShowArgs),
+    /// List the contacts currently matching the segment
+    Members(SegmentMembersArgs),
+    /// Delete a segment definition (does not touch contacts)
+    Rm(SegmentRmArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SegmentCreateArgs {
+    /// Segment name (used to reference it later)
+    pub name: String,
+    /// Filter expression, see `mailing-list-cli` docs §6 for grammar
+    #[arg(long)]
+    pub filter: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SegmentShowArgs {
+    pub name: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SegmentMembersArgs {
+    pub name: String,
+    #[arg(long, default_value = "100")]
+    pub limit: usize,
+    #[arg(long)]
+    pub cursor: Option<i64>,
+}
+
+#[derive(Args, Debug)]
+pub struct SegmentRmArgs {
+    pub name: String,
+    #[arg(long)]
+    pub confirm: bool,
 }

@@ -668,7 +668,6 @@ impl Db {
 
     // ─── Segment operations ────────────────────────────────────────────
 
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_create(&self, name: &str, filter_json: &str) -> Result<i64, AppError> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
@@ -691,7 +690,6 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_all(&self) -> Result<Vec<crate::models::Segment>, AppError> {
         // member_count is computed lazily (see `segment_count_members`); here it is 0.
         // Callers that need counts must call `segment_count_members` separately.
@@ -713,7 +711,6 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
 
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_get_by_name(
         &self,
         name: &str,
@@ -738,7 +735,6 @@ impl Db {
         }
     }
 
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_delete(&self, name: &str) -> Result<bool, AppError> {
         let affected = self
             .conn
@@ -749,7 +745,6 @@ impl Db {
 
     /// Count contacts matching a pre-compiled SQL fragment. The fragment and
     /// params MUST be produced by `segment::compiler::to_sql_where`.
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_count_members(
         &self,
         sql_fragment: &str,
@@ -767,7 +762,6 @@ impl Db {
 
     /// Return the list of contact emails matching a compiled SQL fragment,
     /// paginated. Stable order by `contact.id ASC`.
-    #[allow(dead_code)] // consumed by Task 16 segment commands
     pub fn segment_members(
         &self,
         sql_fragment: &str,

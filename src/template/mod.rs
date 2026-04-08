@@ -1,32 +1,32 @@
-//! Template subsystem: YAML-frontmatter MJML with Handlebars merge tags.
+//! Template subsystem (v0.2): plain HTML source + `{{ var }}` substitution.
+//!
+//! v0.1 used MJML via `mrml`, YAML frontmatter with a variable schema, a
+//! Handlebars compile pipeline, `css-inline` for Outlook, `html2text` for
+//! plain-text alternatives, and a 20-rule lint. v0.2 drops all of that.
+//! Templates are now plain HTML files with a hand-rolled `{{ var }}` +
+//! `{{#if}}` substituter and a 6-rule lint that only catches things a
+//! browser preview can't (CAN-SPAM placeholders, Gmail 102K clip, XSS
+//! allowlist, forbidden tags, send-time unresolved placeholders).
 //!
 //! Pipeline:
 //!
-//!   source   -->   [frontmatter::split]  -->  (VarSchema, body)
-//!                                                  |
-//!                                                  v
-//!                                     [handlebars render + mrml compile]
-//!                                                  |
-//!                                                  v
-//!                                         [css-inline + html2text]
-//!                                                  |
-//!                                                  v
-//!                                             Rendered { html, text, subject }
+//!   html_source + subject + merge_data
+//!     → render::substitute (merge tags, HTML-escape, {{#if}} blocks)
+//!     → render::lint (inline, 6 rules)
+//!     → render::html_to_text (plain-text alt)
+//!     → Rendered { subject, html, text, size_bytes, findings, unresolved }
 //!
-//! The compile module is pure: no DB access, no IO beyond the inputs. The
-//! command layer (`src/commands/template.rs`) handles persistence, config
-//! loading, and $EDITOR integration.
+//! Two entry points:
+//!   - `render::render()` — strict (unresolved = error). Called by the send pipeline.
+//!   - `render::render_preview()` — lenient (unresolved = warning). Called by
+//!     `template preview`, `template render`, and `template lint`.
 
-pub mod compile;
-pub mod frontmatter;
-pub mod lint;
+pub mod render;
+pub mod subst;
 
 #[allow(unused_imports)]
-pub use compile::Rendered;
-pub use compile::{CompileError, compile, compile_with_placeholders};
-pub use frontmatter::{FrontmatterError, split_frontmatter};
+pub use render::{
+    LintFinding, LintRule, RenderError, Rendered, Severity, lint, render, render_preview,
+};
 #[allow(unused_imports)]
-pub use frontmatter::{ParsedTemplate, VarSchema, Variable};
-pub use lint::lint;
-#[allow(unused_imports)]
-pub use lint::{LintFinding, LintOutcome, LintRule, Severity};
+pub use subst::{SubstResult, substitute};

@@ -908,8 +908,7 @@ impl Db {
         &self,
         name: &str,
         subject: &str,
-        mjml_source: &str,
-        schema_json: &str,
+        html_source: &str,
     ) -> Result<i64, AppError> {
         if !is_snake_case(name) {
             return Err(AppError::BadInput {
@@ -926,17 +925,17 @@ impl Db {
         if let Some(t) = existing {
             self.conn
                 .execute(
-                    "UPDATE template SET subject = ?1, mjml_source = ?2, schema_json = ?3, updated_at = ?4 WHERE id = ?5",
-                    params![subject, mjml_source, schema_json, now, t.id],
+                    "UPDATE template SET subject = ?1, html_source = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![subject, html_source, now, t.id],
                 )
                 .map_err(query_err)?;
             Ok(t.id)
         } else {
             self.conn
                 .execute(
-                    "INSERT INTO template (name, subject, mjml_source, schema_json, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                    params![name, subject, mjml_source, schema_json, now],
+                    "INSERT INTO template (name, subject, html_source, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![name, subject, html_source, now],
                 )
                 .map_err(query_err)?;
             Ok(self.conn.last_insert_rowid())
@@ -947,7 +946,7 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, subject, mjml_source, schema_json, created_at, updated_at
+                "SELECT id, name, subject, html_source, created_at, updated_at
                  FROM template ORDER BY name ASC",
             )
             .map_err(query_err)?;
@@ -957,10 +956,9 @@ impl Db {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     subject: row.get(2)?,
-                    mjml_source: row.get(3)?,
-                    schema_json: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    html_source: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
                 })
             })
             .map_err(query_err)?;
@@ -972,7 +970,7 @@ impl Db {
         name: &str,
     ) -> Result<Option<crate::models::Template>, AppError> {
         let row = self.conn.query_row(
-            "SELECT id, name, subject, mjml_source, schema_json, created_at, updated_at
+            "SELECT id, name, subject, html_source, created_at, updated_at
              FROM template WHERE name = ?1",
             params![name],
             |row| {
@@ -980,10 +978,9 @@ impl Db {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     subject: row.get(2)?,
-                    mjml_source: row.get(3)?,
-                    schema_json: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    html_source: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
                 })
             },
         );
@@ -1932,17 +1929,13 @@ mod tests {
     fn template_crud_round_trip() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let db = Db::open_at(tmp.path()).unwrap();
-        let id = db
-            .template_upsert("welcome", "Hi", "<mjml></mjml>", "{}")
-            .unwrap();
+        let id = db.template_upsert("welcome", "Hi", "<p>Hi</p>").unwrap();
         assert!(id > 0);
         let fetched = db.template_get_by_name("welcome").unwrap().unwrap();
         assert_eq!(fetched.subject, "Hi");
 
         // Upsert updates the existing row
-        let id2 = db
-            .template_upsert("welcome", "Hello", "<mjml></mjml>", "{}")
-            .unwrap();
+        let id2 = db.template_upsert("welcome", "Hello", "<p>Hi</p>").unwrap();
         assert_eq!(id, id2);
         let updated = db.template_get_by_name("welcome").unwrap().unwrap();
         assert_eq!(updated.subject, "Hello");
@@ -1959,15 +1952,15 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let db = Db::open_at(tmp.path()).unwrap();
         assert!(
-            db.template_upsert("WelcomeEmail", "Hi", "<mjml></mjml>", "{}")
+            db.template_upsert("WelcomeEmail", "Hi", "<p>Hi</p>")
                 .is_err()
         );
         assert!(
-            db.template_upsert("welcome-email", "Hi", "<mjml></mjml>", "{}")
+            db.template_upsert("welcome-email", "Hi", "<p>Hi</p>")
                 .is_err()
         );
         assert!(
-            db.template_upsert("welcome_email", "Hi", "<mjml></mjml>", "{}")
+            db.template_upsert("welcome_email", "Hi", "<p>Hi</p>")
                 .is_ok()
         );
     }
@@ -1977,9 +1970,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let db = Db::open_at(tmp.path()).unwrap();
         // Need a template to satisfy FK
-        let tid = db
-            .template_upsert("t", "Hi", "<mjml></mjml>", "{}")
-            .unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
         let list_id = db.list_create("news", None, "seg_x").unwrap();
 
         let bid = db.broadcast_create("Q1", tid, "list", list_id).unwrap();
@@ -2007,9 +1998,7 @@ mod tests {
     fn broadcast_recipient_crud() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let db = Db::open_at(tmp.path()).unwrap();
-        let tid = db
-            .template_upsert("t", "Hi", "<mjml></mjml>", "{}")
-            .unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
         let list_id = db.list_create("news", None, "seg_x").unwrap();
         let bid = db.broadcast_create("Q1", tid, "list", list_id).unwrap();
         let cid = db.contact_upsert("alice@example.com", None, None).unwrap();

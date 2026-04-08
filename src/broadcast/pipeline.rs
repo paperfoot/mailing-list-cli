@@ -22,7 +22,7 @@ use crate::error::AppError;
 use crate::models::{Broadcast, Contact};
 use crate::segment::SegmentExpr;
 use crate::segment::compiler;
-use crate::template::{compile_with_placeholders, lint};
+use crate::template::{self, RenderError};
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
@@ -81,7 +81,12 @@ pub fn send_broadcast(id: i64) -> Result<PipelineResult, AppError> {
     let recipients = resolve_target(&db, &broadcast)?;
 
     // 3. Pre-flight invariants
-    preflight_checks(&config, &template.mjml_source, recipients.len())?;
+    preflight_checks(
+        &config,
+        &template.html_source,
+        &template.subject,
+        recipients.len(),
+    )?;
 
     // Resolve sender from config (validated by preflight already, but extract again).
     let sender_from = config
@@ -158,14 +163,32 @@ pub fn send_broadcast(id: i64) -> Result<PipelineResult, AppError> {
                 "broadcast_id": id,
             });
             let rendered =
-                compile_with_placeholders(&template.mjml_source, &merge_data).map_err(|e| {
-                    AppError::BadInput {
-                        code: "template_compile_failed".into(),
-                        message: format!("template render failed: {e}"),
-                        suggestion: "Run `mailing-list-cli template lint <name>` to find issues"
-                            .into(),
-                    }
-                })?;
+                template::render(&template.html_source, &template.subject, &merge_data)
+                    .map_err(|e| {
+                        // STRICT MODE: unresolved placeholders + lint errors abort
+                        // the send before a single email goes out. This is the
+                        // v0.2 replacement for the v0.1 frontmatter variable
+                        // schema — we catch the problem at the latest possible
+                        // moment (when we have real data) instead of the earliest.
+                        let (code, msg) = match &e {
+                            RenderError::UnresolvedAtSend(_) => (
+                                "template_unresolved_placeholder",
+                                format!("cannot send: {e}"),
+                            ),
+                            RenderError::Lint(_) => (
+                                "template_lint_error",
+                                format!("cannot send: {e}"),
+                            ),
+                        };
+                        AppError::BadInput {
+                            code: code.into(),
+                            message: msg,
+                            suggestion: format!(
+                                "Run `mailing-list-cli template preview {} --open` to fix the template before retrying",
+                                template.name
+                            ),
+                        }
+                    })?;
             entries.push(BatchEntry {
                 from: sender_from.clone(),
                 to: vec![contact.email.clone()],
@@ -286,13 +309,15 @@ pub fn preview_broadcast(id: i64, to: &str) -> Result<PipelineResult, AppError> 
         "current_year": chrono::Utc::now().format("%Y").to_string(),
         "broadcast_id": id,
     });
-    let rendered = compile_with_placeholders(&template.mjml_source, &merge_data).map_err(|e| {
-        AppError::BadInput {
-            code: "template_compile_failed".into(),
+    let rendered = template::render(&template.html_source, &template.subject, &merge_data)
+        .map_err(|e| AppError::BadInput {
+            code: "template_render_failed".into(),
             message: format!("template render failed: {e}"),
-            suggestion: "Run `mailing-list-cli template lint <name>` to find issues".into(),
-        }
-    })?;
+            suggestion: format!(
+                "Run `mailing-list-cli template preview {} --open` to debug",
+                template.name
+            ),
+        })?;
     let subject = format!("[PREVIEW] {}", rendered.subject);
 
     let _resend_id = cli.send(&sender_from, to, &subject, &rendered.html, &rendered.text)?;
@@ -341,7 +366,8 @@ fn resolve_target(db: &Db, broadcast: &Broadcast) -> Result<Vec<Contact>, AppErr
 #[allow(dead_code)]
 fn preflight_checks(
     config: &Config,
-    template_source: &str,
+    html_source: &str,
+    subject_source: &str,
     recipient_count: usize,
 ) -> Result<(), AppError> {
     // Invariant 1: physical address must be set
@@ -374,15 +400,13 @@ fn preflight_checks(
             suggestion: "Edit config.toml and set [sender].from = \"you@yourdomain.com\"".into(),
         });
     }
-    // Invariant 2: template lints clean
-    let outcome = lint(template_source);
+    // Invariant 2: template lints clean (6 rules, v0.2)
+    let outcome = template::lint(html_source, subject_source);
     if outcome.has_errors() {
         return Err(AppError::BadInput {
             code: "template_has_lint_errors".into(),
-            message: format!("template has {} lint errors", outcome.error_count),
-            suggestion:
-                "Fix the template via `template edit <name>` or inspect `template lint <name>`"
-                    .into(),
+            message: format!("template has {} lint errors", outcome.error_count()),
+            suggestion: "Run `template lint <name>` or `template preview <name> --open` to see and fix the issues".into(),
         });
     }
     // Invariant 3: recipient count cap
@@ -396,7 +420,7 @@ fn preflight_checks(
             suggestion: "Raise the cap in config.toml [guards] or target a smaller segment".into(),
         });
     }
-    // Invariant 4/5: complaint and bounce rate — Phase 6 job. Stubbed pass in Phase 5.
+    // Invariant 4/5: complaint and bounce rate — Phase 6 job. Stubbed pass.
     Ok(())
 }
 

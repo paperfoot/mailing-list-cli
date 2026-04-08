@@ -73,7 +73,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.1.3 — template lint fixes (unified variable extractor, per-offender line numbers, realistic placeholder sizes)"
+        "status": "v0.2.0 — agent-native rearchitecture: plain HTML templates, JSON-AST segment filters, integrated preview, 14 crate deps"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

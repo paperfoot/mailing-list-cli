@@ -133,9 +133,7 @@ mod tests {
     }
 
     fn seed_broadcast_with_recipient(db: &Db) -> (i64, i64, String) {
-        let tid = db
-            .template_upsert("t", "Hi", "<mjml></mjml>", "{}")
-            .unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
         let list_id = db.list_create("news", None, "seg_x").unwrap();
         let bid = db.broadcast_create("Q1", tid, "list", list_id).unwrap();
         let cid = db.contact_upsert("alice@example.com", None, None).unwrap();

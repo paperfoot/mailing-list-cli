@@ -1428,33 +1428,24 @@ fn contact_ls_filter_on_text_field_with_numeric_content() {
     assert_eq!(v["data"]["contacts"][0]["email"], "alice@example.com");
 }
 
-const VALID_TEMPLATE: &str = r#"---
-name: welcome
-subject: "Welcome, {{ first_name }}"
-variables:
-  - name: first_name
-    type: string
-    required: true
----
-<mjml>
-  <mj-head>
-    <mj-title>Welcome</mj-title>
-    <mj-preview>Welcome to our list</mj-preview>
-  </mj-head>
-  <mj-body>
-    <mj-section>
-      <mj-column>
-        <mj-text>Hi {{ first_name }}</mj-text>
-        {{{ unsubscribe_link }}}
-        {{{ physical_address_footer }}}
-      </mj-column>
-    </mj-section>
-  </mj-body>
-</mjml>
+// v0.2 template format: plain HTML, no frontmatter, no MJML. Subject is
+// passed via `--subject` at create time.
+const VALID_TEMPLATE: &str = r#"<!doctype html>
+<html>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto">
+  <h1>Hi {{ first_name }}</h1>
+  <p>Welcome to our list.</p>
+  <p style="color:#666;font-size:12px">
+    {{{ unsubscribe_link }}}
+    <br>
+    {{{ physical_address_footer }}}
+  </p>
+</body>
+</html>
 "#;
 
 fn write_template_file(tmp: &TempDir, name: &str, content: &str) -> PathBuf {
-    let path = tmp.path().join(format!("{name}.mjml.hbs"));
+    let path = tmp.path().join(format!("{name}.html"));
     std::fs::write(&path, content).unwrap();
     path
 }
@@ -1464,7 +1455,7 @@ fn template_create_from_file_list_show_round_trip() {
     let (tmp, config_path, db_path) = stub_env();
     let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
 
-    // Create from file
+    // Create from file with a subject arg (v0.2: subject is passed at create time).
     let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
     cmd.env("MLC_CONFIG_PATH", &config_path)
         .env("MLC_DB_PATH", &db_path)
@@ -1473,6 +1464,8 @@ fn template_create_from_file_list_show_round_trip() {
             "template",
             "create",
             "welcome",
+            "--subject",
+            "Welcome, {{ first_name }}",
             "--from-file",
             template_path.to_str().unwrap(),
         ]);
@@ -1492,7 +1485,7 @@ fn template_create_from_file_list_show_round_trip() {
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
     assert_eq!(v["data"]["count"], 1);
 
-    // Show
+    // Show — v0.2 returns `html_source`, not `mjml_source`.
     let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
     cmd.env("MLC_CONFIG_PATH", &config_path)
         .env("MLC_DB_PATH", &db_path)
@@ -1500,7 +1493,12 @@ fn template_create_from_file_list_show_round_trip() {
     let out = cmd.assert().success();
     let v: Value =
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
-    assert!(v["data"]["mjml_source"].as_str().unwrap().contains("mjml"));
+    assert!(
+        v["data"]["html_source"]
+            .as_str()
+            .unwrap()
+            .contains("<!doctype html>")
+    );
 }
 
 #[test]
@@ -1525,6 +1523,8 @@ fn template_render_with_data_returns_html() {
             "template",
             "create",
             "welcome",
+            "--subject",
+            "Welcome, {{ first_name }}",
             "--from-file",
             template_path.to_str().unwrap(),
         ]);
@@ -1550,6 +1550,56 @@ fn template_render_with_data_returns_html() {
     assert_eq!(v["data"]["subject"], "Welcome, Alice");
     assert!(v["data"]["html"].as_str().unwrap().contains("Hi Alice"));
     assert!(v["data"]["size_bytes"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn template_preview_writes_html_and_text_to_out_dir() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+    let out_dir = tmp.path().join("preview-out");
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--subject",
+            "Welcome, {{ first_name }}",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "preview",
+            "welcome",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    let html_path = PathBuf::from(v["data"]["html_path"].as_str().unwrap());
+    let text_path = PathBuf::from(v["data"]["text_path"].as_str().unwrap());
+    assert!(html_path.exists(), "preview html must be written");
+    assert!(text_path.exists(), "preview text must be written");
+    let html = std::fs::read_to_string(&html_path).unwrap();
+    // Preview injects default stub values for built-ins, so first_name is "Preview".
+    assert!(html.contains("Hi Preview"));
+    // Triple-brace stubs are substituted with full HTML.
+    assert!(html.contains("Unsubscribe</a>"));
+    let text = std::fs::read_to_string(&text_path).unwrap();
+    assert!(text.contains("Hi Preview"));
+    // No HTML tags in the text version.
+    assert!(!text.contains("<h1>"));
 }
 
 #[test]
@@ -1650,30 +1700,19 @@ fn agent_info_lists_phase_4_commands() {
     }
 }
 
-const SIMPLE_TEMPLATE: &str = r#"---
-name: simple_ad
-subject: "Hi {{ first_name }}"
-variables:
-  - name: first_name
-    type: string
-    required: true
----
-<mjml>
-  <mj-head>
-    <mj-title>Hi</mj-title>
-    <mj-preview>Hello there</mj-preview>
-  </mj-head>
-  <mj-body>
-    <mj-section>
-      <mj-column>
-        <mj-text>Hi {{ first_name }}</mj-text>
-        <mj-button href="https://example.com/cta">Click me</mj-button>
-        {{{ unsubscribe_link }}}
-        {{{ physical_address_footer }}}
-      </mj-column>
-    </mj-section>
-  </mj-body>
-</mjml>
+// v0.2 SIMPLE_TEMPLATE: plain HTML body. Subject is passed at create time.
+const SIMPLE_TEMPLATE: &str = r#"<!doctype html>
+<html>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto">
+  <h1>Hi {{ first_name }}</h1>
+  <p><a href="https://example.com/cta" style="padding:12px 24px;background:#000;color:#fff;text-decoration:none">Click me</a></p>
+  <p style="color:#666;font-size:12px">
+    {{{ unsubscribe_link }}}
+    <br>
+    {{{ physical_address_footer }}}
+  </p>
+</body>
+</html>
 "#;
 
 fn seed_broadcast_env() -> (TempDir, PathBuf, PathBuf, PathBuf) {
@@ -1681,7 +1720,7 @@ fn seed_broadcast_env() -> (TempDir, PathBuf, PathBuf, PathBuf) {
     // Per-test cache dir to avoid polluting the user's cache during tests.
     let cache_dir = tmp.path().join("cache");
     // Create list + contact + template
-    let template_path = tmp.path().join("simple.mjml.hbs");
+    let template_path = tmp.path().join("simple.html");
     std::fs::write(&template_path, SIMPLE_TEMPLATE).unwrap();
 
     for args in [
@@ -1701,6 +1740,8 @@ fn seed_broadcast_env() -> (TempDir, PathBuf, PathBuf, PathBuf) {
             "template",
             "create",
             "simple_ad",
+            "--subject",
+            "Hi {{ first_name }}",
             "--from-file",
             template_path.to_str().unwrap(),
         ],
@@ -2099,13 +2140,13 @@ fn agent_info_lists_phase_6_commands() {
     ] {
         assert!(commands.contains_key(key), "agent-info missing {key}");
     }
-    // Phase 6 commands landed in v0.1.2 and the status string must still start
-    // with a v0.1.x version (v0.1.2, v0.1.3, etc.) — we don't hard-code the
-    // patch version so this test stays stable across bumps.
+    // Phase 6 commands landed in v0.1.2 and survive the v0.2 rearchitecture.
+    // The status string must advertise a v0.x release (not hard-coded to a
+    // specific patch version so bumps don't break this test).
     let status = v["status"].as_str().unwrap();
     assert!(
-        status.starts_with("v0.1."),
-        "status must advertise a v0.1.x release, got: {status}"
+        status.starts_with("v0."),
+        "status must advertise a v0.x release, got: {status}"
     );
     assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
 }

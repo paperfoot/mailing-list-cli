@@ -50,8 +50,9 @@ pub struct Template {
     pub id: i64,
     pub name: String,
     pub subject: String,
-    pub mjml_source: String,
-    pub schema_json: String,
+    /// Plain HTML with `{{ var }}` merge tags. v0.2 dropped MJML + frontmatter
+    /// schemas — this is literally the HTML body the agent wrote.
+    pub html_source: String,
     pub created_at: String,
     pub updated_at: String,
 }

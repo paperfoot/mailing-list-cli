@@ -1,4 +1,5 @@
 pub mod agent_info;
+pub mod broadcast;
 pub mod contact;
 pub mod field;
 pub mod health;

@@ -62,6 +62,11 @@ pub enum Command {
         #[command(subcommand)]
         action: TemplateAction,
     },
+    /// Manage named, targeted broadcasts (campaigns)
+    Broadcast {
+        #[command(subcommand)]
+        action: BroadcastAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -349,4 +354,76 @@ pub struct TemplateRmArgs {
     pub name: String,
     #[arg(long)]
     pub confirm: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BroadcastAction {
+    /// Stage a new broadcast in draft status
+    Create(BroadcastCreateArgs),
+    /// Send a single test copy via email-cli send
+    Preview(BroadcastPreviewArgs),
+    /// Move a draft broadcast into scheduled status
+    Schedule(BroadcastScheduleArgs),
+    /// Send the broadcast now (runs the full pipeline)
+    Send(BroadcastSendArgs),
+    /// Cancel a draft or scheduled broadcast
+    Cancel(BroadcastCancelArgs),
+    /// List recent broadcasts
+    #[command(visible_alias = "ls")]
+    List(BroadcastListArgs),
+    /// Show full details for a broadcast
+    Show(BroadcastShowArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastCreateArgs {
+    /// Broadcast name (agents use this as a memorable identifier)
+    #[arg(long)]
+    pub name: String,
+    /// Template name to send
+    #[arg(long)]
+    pub template: String,
+    /// Target: `list:<name>` or `segment:<name>`
+    #[arg(long)]
+    pub to: String,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastPreviewArgs {
+    pub id: i64,
+    #[arg(long)]
+    pub to: String,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastScheduleArgs {
+    pub id: i64,
+    /// RFC 3339 timestamp (e.g. 2026-04-09T12:00:00Z)
+    #[arg(long)]
+    pub at: String,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastSendArgs {
+    pub id: i64,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastCancelArgs {
+    pub id: i64,
+    #[arg(long)]
+    pub confirm: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastListArgs {
+    #[arg(long)]
+    pub status: Option<String>,
+    #[arg(long, default_value = "50")]
+    pub limit: usize,
+}
+
+#[derive(Args, Debug)]
+pub struct BroadcastShowArgs {
+    pub id: i64,
 }

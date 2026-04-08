@@ -36,6 +36,7 @@ fn main() -> ExitCode {
         Command::Field { action } => commands::field::run(format, action),
         Command::Segment { action } => commands::segment::run(format, action),
         Command::Template { action } => commands::template::run(format, action),
+        Command::Broadcast { action } => commands::broadcast::run(format, action),
     };
 
     match result {

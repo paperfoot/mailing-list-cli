@@ -250,6 +250,7 @@ fn show_contact(
     let tags = db.contact_tags_for(contact.id)?;
     let fields = db.contact_fields_for(contact.id)?;
     let lists = db.contact_lists_for(contact.id)?;
+    let consent = db.contact_consent_for_email(&contact.email)?;
     let fields_json: serde_json::Map<String, serde_json::Value> = fields
         .into_iter()
         .map(|(k, v)| (k, serde_json::Value::String(v)))
@@ -258,6 +259,9 @@ fn show_contact(
         .into_iter()
         .map(|(id, name)| json!({ "id": id, "name": name }))
         .collect();
+    let consent_json = consent
+        .map(|c| json!({ "source": c.source, "at": c.at }))
+        .unwrap_or_else(|| json!(null));
     output::success(
         format,
         &format!("contact: {}", contact.email),
@@ -265,7 +269,8 @@ fn show_contact(
             "contact": contact,
             "tags": tags,
             "fields": fields_json,
-            "lists": lists_json
+            "lists": lists_json,
+            "consent": consent_json
         }),
     );
     Ok(())

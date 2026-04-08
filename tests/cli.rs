@@ -1135,6 +1135,131 @@ fn contact_ls_filter_on_date_field_queries_correct_column() {
 }
 
 #[test]
+fn contact_import_persists_consent_source() {
+    // Bug 3 regression: the CSV importer previously threw away the
+    // consent_source value. After the fix, importing a row with
+    // `consent_source=landing` must persist it on the contact row.
+    let (tmp, config_path, db_path) = stub_env();
+    let csv_path = tmp.path().join("consent.csv");
+    std::fs::write(
+        &csv_path,
+        "email,consent_source\nalice@example.com,landing-page\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            csv_path.to_str().unwrap(),
+            "--list",
+            "1",
+        ]);
+    cmd.assert().success();
+
+    // `contact show` reveals the stored consent via data.consent
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "show", "alice@example.com"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["consent"]["source"], "landing-page");
+    assert!(
+        v["data"]["consent"]["at"].as_str().is_some(),
+        "consent.at must be populated"
+    );
+
+    // The `imported_without_consent` auto-tag must NOT be present — the
+    // row had a real consent_source.
+    let tags = v["data"]["tags"].as_array().unwrap();
+    assert!(
+        !tags
+            .iter()
+            .any(|t| t.as_str() == Some("imported_without_consent"))
+    );
+}
+
+#[test]
+fn contact_import_unsafe_preserves_existing_consent() {
+    // Bug 3 regression: a previously consented contact must not have
+    // their consent overwritten (nor be auto-tagged
+    // `imported_without_consent`) by a later --unsafe-no-consent import.
+    let (tmp, config_path, db_path) = stub_env();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "list", "create", "news"]);
+    cmd.assert().success();
+
+    // First import: real consent source
+    let first_csv = tmp.path().join("first.csv");
+    std::fs::write(
+        &first_csv,
+        "email,consent_source\nalice@example.com,landing-page\n",
+    )
+    .unwrap();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            first_csv.to_str().unwrap(),
+            "--list",
+            "1",
+        ]);
+    cmd.assert().success();
+
+    // Second import: --unsafe-no-consent with only email
+    let second_csv = tmp.path().join("second.csv");
+    std::fs::write(&second_csv, "email\nalice@example.com\n").unwrap();
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "contact",
+            "import",
+            second_csv.to_str().unwrap(),
+            "--list",
+            "1",
+            "--unsafe-no-consent",
+        ]);
+    cmd.assert().success();
+
+    // Consent is still `landing-page` (not overwritten) and the
+    // imported_without_consent tag is NOT applied.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "contact", "show", "alice@example.com"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["consent"]["source"], "landing-page");
+    let tags = v["data"]["tags"].as_array().unwrap();
+    assert!(
+        !tags
+            .iter()
+            .any(|t| t.as_str() == Some("imported_without_consent")),
+        "unsafe import must not retroactively tag a consented contact"
+    );
+}
+
+#[test]
 fn contact_import_rolls_back_on_field_error() {
     // Bug 2 regression: apply_row_local used to call contact_upsert and
     // contact_add_to_list before validating custom-field values. When a

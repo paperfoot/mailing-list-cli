@@ -233,6 +233,72 @@ impl Db {
         }
     }
 
+    /// Upsert a contact together with its consent record. On first insert
+    /// the `consent_source` + `consent_at` columns are populated. On a
+    /// re-upsert they are only filled when the existing row has NULL —
+    /// previously recorded consent is NEVER overwritten.
+    ///
+    /// The CSV importer uses the transaction-scoped path directly in
+    /// `csv_import::apply_row_inside_tx`; this helper is exposed for
+    /// single-row callers (the planned `contact add --consent-source`
+    /// flag and any ad-hoc tooling that needs the same semantics).
+    #[allow(dead_code)]
+    pub fn contact_upsert_with_consent(
+        &self,
+        email: &str,
+        first_name: Option<&str>,
+        last_name: Option<&str>,
+        consent_source: Option<&str>,
+        consent_at: Option<&str>,
+    ) -> Result<i64, AppError> {
+        let id = self.contact_upsert(email, first_name, last_name)?;
+        // Only fill consent_source/consent_at when the stored value is NULL
+        // and the caller actually provided a non-empty source.
+        if let Some(src) = consent_source.map(str::trim).filter(|s| !s.is_empty()) {
+            let existing: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT consent_source FROM contact WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .map_err(query_err)?;
+            if existing.is_none() {
+                let now = chrono::Utc::now().to_rfc3339();
+                let ts = consent_at.unwrap_or(&now);
+                self.conn
+                    .execute(
+                        "UPDATE contact SET consent_source = ?1, consent_at = ?2, updated_at = ?3 WHERE id = ?4",
+                        params![src, ts, now, id],
+                    )
+                    .map_err(query_err)?;
+            }
+        }
+        Ok(id)
+    }
+
+    /// Return the stored consent source and recording timestamp for a given
+    /// contact (by email), if any. Either or both may be `None`.
+    pub fn contact_consent_for_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<ContactConsent>, AppError> {
+        match self.conn.query_row(
+            "SELECT consent_source, consent_at FROM contact WHERE email = ?1 COLLATE NOCASE",
+            params![email],
+            |r| {
+                Ok(ContactConsent {
+                    source: r.get::<_, Option<String>>(0)?,
+                    at: r.get::<_, Option<String>>(1)?,
+                })
+            },
+        ) {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
     pub fn contact_add_to_list(&self, contact_id: i64, list_id: i64) -> Result<(), AppError> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
@@ -816,6 +882,14 @@ impl Db {
             .map_err(query_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
+}
+
+/// Stored consent record for a contact. Both fields may be `None` if
+/// consent was never recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContactConsent {
+    pub source: Option<String>,
+    pub at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

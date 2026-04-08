@@ -253,6 +253,35 @@ fn apply_row_inside_tx(
         Err(e) => return Err(tx_query_err(e)),
     };
 
+    // Look up any existing consent on the contact BEFORE writing anything
+    // new. We need this to decide (a) whether to auto-tag
+    // `imported_without_consent` under --unsafe-no-consent and (b) whether
+    // to overwrite a previously recorded consent_source.
+    let prior_consent: Option<String> = tx
+        .query_row(
+            "SELECT consent_source FROM contact WHERE id = ?1",
+            rusqlite::params![contact_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .map_err(tx_query_err)?;
+
+    // Persist consent_source + consent_at only when a non-empty source
+    // was provided on the CSV row AND the contact has no prior consent.
+    let row_consent_source = row
+        .consent_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(src) = row_consent_source
+        && prior_consent.is_none()
+    {
+        tx.execute(
+            "UPDATE contact SET consent_source = ?1, consent_at = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![src, now, now, contact_id],
+        )
+        .map_err(tx_query_err)?;
+    }
+
     // List membership
     tx.execute(
         "INSERT OR IGNORE INTO list_membership (list_id, contact_id, joined_at)
@@ -261,9 +290,14 @@ fn apply_row_inside_tx(
     )
     .map_err(tx_query_err)?;
 
-    // Tags
+    // Tags. The `imported_without_consent` auto-tag is ONLY applied when:
+    //   - the caller passed --unsafe-no-consent, AND
+    //   - the row itself has no consent_source, AND
+    //   - the contact has no prior recorded consent.
+    let auto_tag_unsafe =
+        unsafe_no_consent && row_consent_source.is_none() && prior_consent.is_none();
     let mut resolved_tags: Vec<String> = row.tags.clone();
-    if unsafe_no_consent {
+    if auto_tag_unsafe {
         resolved_tags.push("imported_without_consent".to_string());
     }
     for tag in &resolved_tags {

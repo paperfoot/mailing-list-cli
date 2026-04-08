@@ -35,3 +35,13 @@ pub struct Field {
     pub options: Option<Vec<String>>, // deserialized from options_json for select
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)] // consumed by Task 16 segment commands
+pub struct Segment {
+    pub id: i64,
+    pub name: String,
+    pub filter_json: String,
+    pub created_at: String,
+    pub member_count: i64,
+}

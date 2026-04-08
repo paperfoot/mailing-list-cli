@@ -665,6 +665,147 @@ impl Db {
             .map_err(query_err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
+
+    // ─── Segment operations ────────────────────────────────────────────
+
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_create(&self, name: &str, filter_json: &str) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO segment (name, filter_json, created_at) VALUES (?1, ?2, ?3)",
+                params![name, filter_json, now],
+            )
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE constraint failed") {
+                    AppError::BadInput {
+                        code: "segment_already_exists".into(),
+                        message: format!("a segment named '{name}' already exists"),
+                        suggestion: "Run `mailing-list-cli segment ls` to see existing segments"
+                            .into(),
+                    }
+                } else {
+                    query_err(e)
+                }
+            })?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_all(&self) -> Result<Vec<crate::models::Segment>, AppError> {
+        // member_count is computed lazily (see `segment_count_members`); here it is 0.
+        // Callers that need counts must call `segment_count_members` separately.
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, filter_json, created_at FROM segment ORDER BY name ASC")
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::models::Segment {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    filter_json: row.get(2)?,
+                    created_at: row.get(3)?,
+                    member_count: 0,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_get_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::models::Segment>, AppError> {
+        let row = self.conn.query_row(
+            "SELECT id, name, filter_json, created_at FROM segment WHERE name = ?1",
+            params![name],
+            |row| {
+                Ok(crate::models::Segment {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    filter_json: row.get(2)?,
+                    created_at: row.get(3)?,
+                    member_count: 0,
+                })
+            },
+        );
+        match row {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_delete(&self, name: &str) -> Result<bool, AppError> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM segment WHERE name = ?1", params![name])
+            .map_err(query_err)?;
+        Ok(affected > 0)
+    }
+
+    /// Count contacts matching a pre-compiled SQL fragment. The fragment and
+    /// params MUST be produced by `segment::compiler::to_sql_where`.
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_count_members(
+        &self,
+        sql_fragment: &str,
+        params: &[rusqlite::types::Value],
+    ) -> Result<i64, AppError> {
+        let sql = format!("SELECT COUNT(*) FROM contact c WHERE {sql_fragment}");
+        let count: i64 = self
+            .conn
+            .query_row(&sql, rusqlite::params_from_iter(params.iter()), |r| {
+                r.get(0)
+            })
+            .map_err(query_err)?;
+        Ok(count)
+    }
+
+    /// Return the list of contact emails matching a compiled SQL fragment,
+    /// paginated. Stable order by `contact.id ASC`.
+    #[allow(dead_code)] // consumed by Task 16 segment commands
+    pub fn segment_members(
+        &self,
+        sql_fragment: &str,
+        params: &[rusqlite::types::Value],
+        limit: usize,
+        cursor: Option<i64>,
+    ) -> Result<Vec<Contact>, AppError> {
+        let mut sql = format!(
+            "SELECT c.id, c.email, c.first_name, c.last_name, c.status, c.created_at
+             FROM contact c WHERE ({sql_fragment})"
+        );
+        if cursor.is_some() {
+            sql.push_str(" AND c.id > ?");
+        }
+        sql.push_str(" ORDER BY c.id ASC LIMIT ?");
+        let mut stmt = self.conn.prepare(&sql).map_err(query_err)?;
+
+        // Build the params: original params, then cursor (if any), then limit.
+        let mut all: Vec<rusqlite::types::Value> = params.to_vec();
+        if let Some(c) = cursor {
+            all.push(rusqlite::types::Value::Integer(c));
+        }
+        all.push(rusqlite::types::Value::Integer(limit as i64));
+
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(all.iter()), |row| {
+                Ok(Contact {
+                    id: row.get(0)?,
+                    email: row.get(1)?,
+                    first_name: row.get(2)?,
+                    last_name: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -962,5 +1103,30 @@ mod tests {
             .unwrap();
         let values = db.contact_fields_for(c).unwrap();
         assert_eq!(values[0].1, "Globex");
+    }
+
+    #[test]
+    fn segment_crud_round_trip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let id = db.segment_create("vips", "{}").unwrap();
+        assert!(id > 0);
+        let all = db.segment_all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "vips");
+        assert!(db.segment_get_by_name("vips").unwrap().is_some());
+        assert!(db.segment_delete("vips").unwrap());
+        assert!(db.segment_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn segment_duplicate_name_errors() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.segment_create("a", "{}").unwrap();
+        assert_eq!(
+            db.segment_create("a", "{}").unwrap_err().code(),
+            "segment_already_exists"
+        );
     }
 }

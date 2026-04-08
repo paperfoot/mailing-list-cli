@@ -41,6 +41,31 @@ fn agent_info_lists_health_command() {
 }
 
 #[test]
+fn agent_info_lists_phase_3_commands() {
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    let out = cmd.args(["--json", "agent-info"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stdout).unwrap();
+    let commands = v["commands"].as_object().unwrap();
+    // Sanity: every major Phase 3 command is advertised
+    for key in [
+        "contact show <email>",
+        "contact tag <email> <tag>",
+        "contact import <file.csv> --list <id> [--unsafe-no-consent]",
+        "tag ls",
+        "field create <key> --type <text|number|date|bool|select> [--options a,b,c]",
+        "segment create <name> --filter <expr>",
+        "segment members <name> [--limit N] [--cursor C]",
+    ] {
+        assert!(
+            commands.contains_key(key),
+            "agent-info missing command: {key}"
+        );
+    }
+    assert!(v["status"].as_str().unwrap().starts_with("v0.0.4"));
+}
+
+#[test]
 fn version_flag_exits_zero() {
     let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
     cmd.arg("--version")

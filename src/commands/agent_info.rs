@@ -8,12 +8,27 @@ pub fn run() {
         "description": "Newsletter and mailing list management from your terminal. Built for AI agents on top of email-cli.",
         "commands": {
             "agent-info": "Machine-readable capability manifest (this output)",
-            "health": "Run a system health check (email-cli reachable, DB writable, config valid)",
-            "list create <name> [--description <text>]": "Create a list (also creates a Resend audience via email-cli)",
+            "health": "Run a system health check",
+            "list create <name> [--description <text>]": "Create a list (backed by a Resend segment via email-cli)",
             "list ls": "List all lists with subscriber counts",
             "list show <id>": "Show one list's details",
-            "contact add <email> --list <id> [--first-name <f> --last-name <l>]": "Add a contact to a list",
-            "contact ls --list <id> [--limit N]": "List contacts in a list",
+            "contact add <email> --list <id> [--first-name F --last-name L --field key=val ...]": "Add a contact to a list",
+            "contact ls [--list <id>] [--filter <expr>] [--limit N] [--cursor C]": "List/filter contacts",
+            "contact show <email>": "Show a contact's full details (tags, fields, list memberships)",
+            "contact tag <email> <tag>": "Apply a tag to a contact",
+            "contact untag <email> <tag>": "Remove a tag from a contact",
+            "contact set <email> <field> <value>": "Set a typed custom field value",
+            "contact import <file.csv> --list <id> [--unsafe-no-consent]": "Bulk-import contacts from CSV (5 req/sec rate limit, idempotent replay)",
+            "tag ls": "List all tags with member counts",
+            "tag rm <name> --confirm": "Delete a tag",
+            "field create <key> --type <text|number|date|bool|select> [--options a,b,c]": "Create a typed custom field",
+            "field ls": "List all custom fields",
+            "field rm <key> --confirm": "Delete a custom field",
+            "segment create <name> --filter <expr>": "Save a dynamic segment",
+            "segment ls": "List all segments with member counts",
+            "segment show <name>": "Show a segment's filter + 10 sample members",
+            "segment members <name> [--limit N] [--cursor C]": "List contacts currently matching the segment",
+            "segment rm <name> --confirm": "Delete a segment definition",
             "update [--check]": "Self-update from GitHub Releases",
             "skill install": "Install skill files into Claude / Codex / Gemini paths",
             "skill status": "Show which platforms have the skill installed"
@@ -38,7 +53,7 @@ pub fn run() {
         "auto_json_when_piped": true,
         "env_prefix": "MLC_",
         "depends_on": ["email-cli >= 0.6.0"],
-        "status": "v0.0.3 — migrated to email-cli v0.6 (audiences → segments)"
+        "status": "v0.0.4 — contacts, tags, fields, segments, filter parser, CSV import"
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

@@ -67,6 +67,21 @@ pub enum Command {
         #[command(subcommand)]
         action: BroadcastAction,
     },
+    /// Webhook ingestion: listen, poll, test
+    Webhook {
+        #[command(subcommand)]
+        action: WebhookAction,
+    },
+    /// Shorthand for `webhook poll`
+    Event {
+        #[command(subcommand)]
+        action: EventAction,
+    },
+    /// Analytics reports (per-broadcast, per-link, engagement, deliverability)
+    Report {
+        #[command(subcommand)]
+        action: ReportAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -426,4 +441,78 @@ pub struct BroadcastListArgs {
 #[derive(Args, Debug)]
 pub struct BroadcastShowArgs {
     pub id: i64,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WebhookAction {
+    /// Run the HTTP webhook listener (long-running)
+    Listen(WebhookListenArgs),
+    /// Poll email-cli for delivery status updates
+    Poll(WebhookPollArgs),
+    /// Emit a synthetic event for testing
+    Test(WebhookTestArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct WebhookListenArgs {
+    #[arg(long, default_value = "127.0.0.1:8081")]
+    pub bind: String,
+}
+
+#[derive(Args, Debug)]
+pub struct WebhookPollArgs {
+    #[arg(long)]
+    pub reset: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WebhookTestArgs {
+    #[arg(long)]
+    pub to: String,
+    #[arg(long)]
+    pub event: String,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EventAction {
+    /// Poll email-cli for events
+    Poll(WebhookPollArgs),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ReportAction {
+    /// Show per-broadcast summary stats
+    Show(ReportShowArgs),
+    /// Show per-link click counts for a broadcast
+    Links(ReportLinksArgs),
+    /// Show engagement across a list/segment
+    Engagement(ReportEngagementArgs),
+    /// Show rolling-window bounce rate / complaint rate
+    Deliverability(ReportDeliverabilityArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ReportShowArgs {
+    pub broadcast_id: i64,
+}
+
+#[derive(Args, Debug)]
+pub struct ReportLinksArgs {
+    pub broadcast_id: i64,
+}
+
+#[derive(Args, Debug)]
+pub struct ReportEngagementArgs {
+    #[arg(long)]
+    pub list: Option<String>,
+    #[arg(long)]
+    pub segment: Option<String>,
+    #[arg(long, default_value = "30")]
+    pub days: i64,
+}
+
+#[derive(Args, Debug)]
+pub struct ReportDeliverabilityArgs {
+    #[arg(long, default_value = "7")]
+    pub days: i64,
 }

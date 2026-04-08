@@ -40,6 +40,9 @@ fn main() -> ExitCode {
         Command::Segment { action } => commands::segment::run(format, action),
         Command::Template { action } => commands::template::run(format, action),
         Command::Broadcast { action } => commands::broadcast::run(format, action),
+        Command::Webhook { action } => commands::webhook::run(format, action),
+        Command::Event { action } => commands::webhook::run_event(format, action),
+        Command::Report { action } => commands::report::run(format, action),
     };
 
     match result {

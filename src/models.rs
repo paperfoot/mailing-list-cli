@@ -88,3 +88,42 @@ pub struct BroadcastRecipient {
     pub sent_at: Option<String>,
     pub last_event_at: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)] // wired into commands::report in Phase 6 Tasks 7-8
+pub struct ReportSummary {
+    pub broadcast_id: i64,
+    pub broadcast_name: String,
+    pub recipient_count: i64,
+    pub delivered_count: i64,
+    pub bounced_count: i64,
+    pub opened_count: i64,
+    pub clicked_count: i64,
+    pub unsubscribed_count: i64,
+    pub complained_count: i64,
+    pub suppressed_count: i64,
+    pub ctr: f64,
+    pub bounce_rate: f64,
+    pub complaint_rate: f64,
+    pub open_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
+pub struct LinkReport {
+    pub link: String,
+    pub clicks: i64,
+    pub unique_clickers: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
+pub struct DeliverabilityReport {
+    pub window_days: i64,
+    pub total_sent: i64,
+    pub total_delivered: i64,
+    pub total_bounced: i64,
+    pub total_complained: i64,
+    pub bounce_rate: f64,
+    pub complaint_rate: f64,
+}

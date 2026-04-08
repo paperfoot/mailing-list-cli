@@ -1,0 +1,83 @@
+// Filter expression grammar for mailing-list-cli.
+// See docs/specs/2026-04-07-mailing-list-cli-design.md §6 for the language reference.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+// Top-level
+expression = { SOI ~ or_expr ~ EOI }
+
+// Precedence: OR < AND < NOT < atom
+or_expr  =  { and_expr ~ (or_op ~ and_expr)* }
+and_expr =  { not_expr ~ (and_op ~ not_expr)* }
+not_expr =  { not_op? ~ term }
+
+or_op  = @{ ^"OR" }
+and_op = @{ ^"AND" }
+not_op = @{ ^"NOT" }
+
+term = _{ paren | atom }
+paren = { "(" ~ or_expr ~ ")" }
+
+// Atoms
+atom = _{
+      engagement_atom
+    | tag_atom
+    | list_atom
+    | bounced_atom
+    | keyed_atom
+}
+
+// Engagement (order matters — longest prefix wins in pest)
+engagement_atom = {
+      opened_last
+    | clicked_last
+    | sent_last
+    | inactive_for
+    | never_opened
+}
+opened_last   = { ^"opened_last"   ~ ":" ~ duration }
+clicked_last  = { ^"clicked_last"  ~ ":" ~ duration }
+sent_last     = { ^"sent_last"     ~ ":" ~ duration }
+inactive_for  = { ^"inactive_for"  ~ ":" ~ duration }
+never_opened  = { ^"never_opened" }
+
+// Tags and lists — longest prefix first
+tag_atom = {
+      has_tag_atom
+    | no_tag_atom
+    | tag_short
+}
+tag_short    = { ^"tag"     ~ ":" ~ ident }
+has_tag_atom = { ^"has_tag" ~ ":" ~ ident }
+no_tag_atom  = { ^"no_tag"  ~ ":" ~ ident }
+
+list_atom = {
+      in_list_atom
+    | not_in_list_atom
+    | list_short
+}
+list_short       = { ^"list"        ~ ":" ~ ident }
+in_list_atom     = { ^"in_list"     ~ ":" ~ ident }
+not_in_list_atom = { ^"not_in_list" ~ ":" ~ ident }
+
+// Bare `bounced` keyword
+bounced_atom = { ^"bounced" ~ !(":" | ident_char) }
+
+// Generic `key:value` or `key:op:value` — the key must not be a reserved prefix.
+// Reserved prefixes are handled above; `status:` and arbitrary field keys fall through here.
+keyed_atom = { ident ~ ":" ~ (op_prefixed_value | implicit_eq_value) }
+op_prefixed_value   = { op_token ~ ":" ~ value }
+implicit_eq_value   = { value }
+op_token = @{ "!=" | "!~" | ">=" | "<=" | "=" | "~" | ">" | "<" }
+
+// Duration
+duration = @{ ASCII_DIGIT+ ~ duration_unit }
+duration_unit = @{ "d" | "h" | "w" | "m" }
+
+// Identifiers, values
+ident = @{ ident_char ~ ident_char* }
+ident_char = _{ ASCII_ALPHANUMERIC | "_" | "-" | "." }
+
+value = _{ quoted_value | bare_value }
+quoted_value = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+bare_value   = @{ (ASCII_ALPHANUMERIC | "_" | "-" | "." | "@" | "+")+ }

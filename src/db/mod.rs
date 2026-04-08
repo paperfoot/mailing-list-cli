@@ -1250,6 +1250,196 @@ impl Db {
             Err(e) => Err(query_err(e)),
         }
     }
+
+    // ─── Event operations ──────────────────────────────────────────────
+
+    /// Insert an event row. Returns true if inserted, false if already
+    /// present (idempotent via the unique index on (resend_email_id, type)).
+    pub fn event_insert(
+        &self,
+        event_type: &str,
+        resend_email_id: &str,
+        broadcast_id: Option<i64>,
+        contact_id: Option<i64>,
+        payload_json: &str,
+    ) -> Result<bool, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let affected = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO event (type, resend_email_id, broadcast_id, contact_id, payload_json, received_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![event_type, resend_email_id, broadcast_id, contact_id, payload_json, now],
+            )
+            .map_err(query_err)?;
+        Ok(affected > 0)
+    }
+
+    /// Look up a `broadcast_recipient` row by `resend_email_id`.
+    pub fn recipient_by_resend_email_id(
+        &self,
+        resend_email_id: &str,
+    ) -> Result<Option<(i64, i64)>, AppError> {
+        match self.conn.query_row(
+            "SELECT broadcast_id, contact_id FROM broadcast_recipient WHERE resend_email_id = ?1",
+            params![resend_email_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        ) {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    pub fn broadcast_recipient_update_status(
+        &self,
+        broadcast_id: i64,
+        contact_id: i64,
+        status: &str,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE broadcast_recipient
+                 SET status = ?1, last_event_at = ?2
+                 WHERE broadcast_id = ?3 AND contact_id = ?4",
+                params![status, now, broadcast_id, contact_id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn broadcast_increment_stat(
+        &self,
+        broadcast_id: i64,
+        column: &str,
+    ) -> Result<(), AppError> {
+        // Whitelist the column names to prevent SQL injection
+        let column = match column {
+            "delivered_count" => "delivered_count",
+            "bounced_count" => "bounced_count",
+            "opened_count" => "opened_count",
+            "clicked_count" => "clicked_count",
+            "unsubscribed_count" => "unsubscribed_count",
+            "complained_count" => "complained_count",
+            _ => {
+                return Err(AppError::BadInput {
+                    code: "bad_stat_column".into(),
+                    message: format!("unknown stat column: {column}"),
+                    suggestion: "Report as a bug".into(),
+                });
+            }
+        };
+        let sql = format!("UPDATE broadcast SET {column} = {column} + 1 WHERE id = ?1");
+        self.conn
+            .execute(&sql, params![broadcast_id])
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn click_insert(
+        &self,
+        broadcast_id: i64,
+        contact_id: Option<i64>,
+        link: &str,
+        ip_address: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO click (broadcast_id, contact_id, link, ip_address, user_agent, clicked_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![broadcast_id, contact_id, link, ip_address, user_agent, now],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn suppression_insert(
+        &self,
+        email: &str,
+        reason: &str,
+        source_broadcast_id: Option<i64>,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO suppression (email, reason, suppressed_at, source_broadcast_id)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![email, reason, now, source_broadcast_id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn contact_set_status(&self, email: &str, status: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE contact SET status = ?1, updated_at = ?2 WHERE email = ?3 COLLATE NOCASE",
+                params![status, chrono::Utc::now().to_rfc3339(), email],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    pub fn soft_bounce_increment(&self, contact_id: i64) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO soft_bounce_count (contact_id, consecutive, last_bounce_at)
+                 VALUES (?1, 1, ?2)
+                 ON CONFLICT(contact_id) DO UPDATE SET consecutive = consecutive + 1, last_bounce_at = ?2",
+                params![contact_id, now],
+            )
+            .map_err(query_err)?;
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT consecutive FROM soft_bounce_count WHERE contact_id = ?1",
+                params![contact_id],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        Ok(count)
+    }
+
+    pub fn soft_bounce_reset(&self, contact_id: i64) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "DELETE FROM soft_bounce_count WHERE contact_id = ?1",
+                params![contact_id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    // ─── KV cursor operations ──────────────────────────────────────────
+
+    #[allow(dead_code)]
+    pub fn kv_get(&self, key: &str) -> Result<Option<String>, AppError> {
+        match self.conn.query_row(
+            "SELECT value FROM kv WHERE key = ?1",
+            params![key],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn kv_set(&self, key: &str, value: &str) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?1, ?2, ?3)",
+                params![key, value, now],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
 }
 
 /// Stored consent record for a contact. Both fields may be `None` if

@@ -489,6 +489,150 @@ impl Db {
             .map_err(query_err)?;
         Ok(affected > 0)
     }
+
+    // ─── Contact field values ──────────────────────────────────────────
+
+    /// Coerce a string input into the correct typed column based on the
+    /// field definition. Returns a `TypedFieldValue` or a `BadInput` error
+    /// with an agent-friendly message.
+    #[allow(dead_code)] // Wired up in Task 13
+    pub fn coerce_field_value(
+        &self,
+        field: &crate::models::Field,
+        raw: &str,
+    ) -> Result<TypedFieldValue, AppError> {
+        match field.r#type.as_str() {
+            "text" => Ok(TypedFieldValue::Text(raw.to_string())),
+            "number" => raw
+                .parse::<f64>()
+                .map(TypedFieldValue::Number)
+                .map_err(|_| AppError::BadInput {
+                    code: "field_coercion_failed".into(),
+                    message: format!(
+                        "field '{}' is type number but value '{}' is not numeric",
+                        field.key, raw
+                    ),
+                    suggestion: "Provide a decimal number, e.g. 42 or 3.14".into(),
+                }),
+            "bool" => match raw.to_ascii_lowercase().as_str() {
+                "true" | "yes" | "1" => Ok(TypedFieldValue::Bool(true)),
+                "false" | "no" | "0" => Ok(TypedFieldValue::Bool(false)),
+                other => Err(AppError::BadInput {
+                    code: "field_coercion_failed".into(),
+                    message: format!(
+                        "field '{}' is type bool but value '{}' is not boolean",
+                        field.key, other
+                    ),
+                    suggestion: "Use true/false/yes/no/1/0".into(),
+                }),
+            },
+            "date" => chrono::DateTime::parse_from_rfc3339(raw)
+                .map(|dt| TypedFieldValue::Date(dt.to_rfc3339()))
+                .map_err(|e| AppError::BadInput {
+                    code: "field_coercion_failed".into(),
+                    message: format!(
+                        "field '{}' is type date but value '{}' is not RFC 3339: {e}",
+                        field.key, raw
+                    ),
+                    suggestion: "Use RFC 3339, e.g. 2026-04-08T12:00:00Z".into(),
+                }),
+            "select" => {
+                let options = field.options.as_ref().ok_or_else(|| AppError::Transient {
+                    code: "select_without_options".into(),
+                    message: format!("field '{}' is select but has no options", field.key),
+                    suggestion: "Recreate the field with --options".into(),
+                })?;
+                if options.iter().any(|o| o == raw) {
+                    Ok(TypedFieldValue::Text(raw.to_string()))
+                } else {
+                    Err(AppError::BadInput {
+                        code: "field_coercion_failed".into(),
+                        message: format!(
+                            "field '{}' value '{}' is not in the allowed options",
+                            field.key, raw
+                        ),
+                        suggestion: format!("Allowed options: {}", options.join(", ")),
+                    })
+                }
+            }
+            other => Err(AppError::Transient {
+                code: "unknown_field_type".into(),
+                message: format!("field '{}' has unknown type '{other}'", field.key),
+                suggestion: "Inspect the field row — schema may be corrupt".into(),
+            }),
+        }
+    }
+
+    /// Write a typed value to `contact_field_value`. INSERT OR REPLACE so the
+    /// caller doesn't need to check existence first.
+    #[allow(dead_code)] // Wired up in Task 13
+    pub fn contact_field_upsert(
+        &self,
+        contact_id: i64,
+        field_id: i64,
+        value: &TypedFieldValue,
+    ) -> Result<(), AppError> {
+        let (text, num, date, b) = match value {
+            TypedFieldValue::Text(s) => (Some(s.clone()), None, None, None),
+            TypedFieldValue::Number(n) => (None, Some(*n), None, None),
+            TypedFieldValue::Date(d) => (None, None, Some(d.clone()), None),
+            TypedFieldValue::Bool(b) => (None, None, None, Some(if *b { 1i64 } else { 0 })),
+        };
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO contact_field_value
+                 (contact_id, field_id, value_text, value_number, value_date, value_bool)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![contact_id, field_id, text, num, date, b],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    /// Fetch all field values for a contact, returned as (key, display_string).
+    #[allow(dead_code)] // Wired up in Task 13/14
+    pub fn contact_fields_for(&self, contact_id: i64) -> Result<Vec<(String, String)>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT f.key, f.type, cfv.value_text, cfv.value_number, cfv.value_date, cfv.value_bool
+                 FROM contact_field_value cfv
+                 JOIN field f ON cfv.field_id = f.id
+                 WHERE cfv.contact_id = ?1
+                 ORDER BY f.key",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map(params![contact_id], |row| {
+                let key: String = row.get(0)?;
+                let ty: String = row.get(1)?;
+                let display = match ty.as_str() {
+                    "text" | "select" => row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    "number" => row
+                        .get::<_, Option<f64>>(3)?
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
+                    "date" => row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    "bool" => row
+                        .get::<_, Option<i64>>(5)?
+                        .map(|b| if b != 0 { "true" } else { "false" }.to_string())
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                Ok((key, display))
+            })
+            .map_err(query_err)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // Wired up in Task 13
+pub enum TypedFieldValue {
+    Text(String),
+    Number(f64),
+    Date(String), // normalized RFC 3339 string
+    Bool(bool),
 }
 
 fn is_snake_case(s: &str) -> bool {
@@ -704,5 +848,79 @@ mod tests {
         db.field_create("company", "text", None).unwrap();
         assert!(db.field_delete("company").unwrap());
         assert!(db.field_get("company").unwrap().is_none());
+    }
+
+    #[test]
+    fn coerce_number_accepts_integers_and_decimals() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.field_create("age", "number", None).unwrap();
+        let f = db.field_get("age").unwrap().unwrap();
+        assert_eq!(
+            db.coerce_field_value(&f, "42").unwrap(),
+            TypedFieldValue::Number(42.0)
+        );
+        assert_eq!(
+            db.coerce_field_value(&f, "2.5").unwrap(),
+            TypedFieldValue::Number(2.5)
+        );
+    }
+
+    #[test]
+    fn coerce_number_rejects_text() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.field_create("age", "number", None).unwrap();
+        let f = db.field_get("age").unwrap().unwrap();
+        assert!(db.coerce_field_value(&f, "old").is_err());
+    }
+
+    #[test]
+    fn coerce_bool_accepts_common_forms() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.field_create("subscribed", "bool", None).unwrap();
+        let f = db.field_get("subscribed").unwrap().unwrap();
+        for truthy in &["true", "TRUE", "yes", "1"] {
+            assert_eq!(
+                db.coerce_field_value(&f, truthy).unwrap(),
+                TypedFieldValue::Bool(true)
+            );
+        }
+        for falsy in &["false", "NO", "0"] {
+            assert_eq!(
+                db.coerce_field_value(&f, falsy).unwrap(),
+                TypedFieldValue::Bool(false)
+            );
+        }
+    }
+
+    #[test]
+    fn coerce_select_enforces_options() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.field_create("plan", "select", Some(&["free".into(), "pro".into()]))
+            .unwrap();
+        let f = db.field_get("plan").unwrap().unwrap();
+        assert!(db.coerce_field_value(&f, "pro").is_ok());
+        assert!(db.coerce_field_value(&f, "enterprise").is_err());
+    }
+
+    #[test]
+    fn contact_field_upsert_and_read_back() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let c = db.contact_upsert("alice@example.com", None, None).unwrap();
+        let _ = db.field_create("company", "text", None).unwrap();
+        let f = db.field_get("company").unwrap().unwrap();
+        db.contact_field_upsert(c, f.id, &TypedFieldValue::Text("Acme".into()))
+            .unwrap();
+        let values = db.contact_fields_for(c).unwrap();
+        assert_eq!(values, vec![("company".to_string(), "Acme".to_string())]);
+        // Overwrite
+        db.contact_field_upsert(c, f.id, &TypedFieldValue::Text("Globex".into()))
+            .unwrap();
+        let values = db.contact_fields_for(c).unwrap();
+        assert_eq!(values[0].1, "Globex");
     }
 }

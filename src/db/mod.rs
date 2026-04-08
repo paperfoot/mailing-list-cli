@@ -606,16 +606,35 @@ impl Db {
                     suggestion: "Use true/false/yes/no/1/0".into(),
                 }),
             },
-            "date" => chrono::DateTime::parse_from_rfc3339(raw)
-                .map(|dt| TypedFieldValue::Date(dt.to_rfc3339()))
-                .map_err(|e| AppError::BadInput {
-                    code: "field_coercion_failed".into(),
-                    message: format!(
-                        "field '{}' is type date but value '{}' is not RFC 3339: {e}",
-                        field.key, raw
-                    ),
-                    suggestion: "Use RFC 3339, e.g. 2026-04-08T12:00:00Z".into(),
-                }),
+            "date" => {
+                // Accept plain YYYY-MM-DD first, normalizing to midnight
+                // UTC RFC 3339. Fall through to the full RFC 3339 parser
+                // for timestamps with time-of-day. Either way the stored
+                // value is a normalized RFC 3339 string so downstream
+                // string comparisons (`value_date >= ?`) line up.
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+                    let dt = d.and_hms_opt(0, 0, 0).ok_or_else(|| AppError::Transient {
+                        code: "date_hms_overflow".into(),
+                        message: format!("could not build midnight timestamp for '{raw}'"),
+                        suggestion: "report as a bug".into(),
+                    })?;
+                    let utc: chrono::DateTime<chrono::Utc> =
+                        chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc);
+                    return Ok(TypedFieldValue::Date(utc.to_rfc3339()));
+                }
+                chrono::DateTime::parse_from_rfc3339(raw)
+                    .map(|dt| TypedFieldValue::Date(dt.to_rfc3339()))
+                    .map_err(|e| AppError::BadInput {
+                        code: "field_coercion_failed".into(),
+                        message: format!(
+                            "field '{}' is type date but value '{}' is not RFC 3339: {e}",
+                            field.key, raw
+                        ),
+                        suggestion:
+                            "Use RFC 3339 or YYYY-MM-DD, e.g. 2026-04-08T12:00:00Z or 2026-04-08"
+                                .into(),
+                    })
+            }
             "select" => {
                 let options = field.options.as_ref().ok_or_else(|| AppError::Transient {
                     code: "select_without_options".into(),
@@ -1138,6 +1157,38 @@ mod tests {
         db.field_create("age", "number", None).unwrap();
         let f = db.field_get("age").unwrap().unwrap();
         assert!(db.coerce_field_value(&f, "old").is_err());
+    }
+
+    #[test]
+    fn coerce_date_accepts_plain_date_and_rfc3339() {
+        // Bug 6 regression: the `date` field type used to require a full
+        // RFC 3339 timestamp, rejecting plain dates like `2026-04-08`.
+        // Both forms must now parse and normalize to RFC 3339.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        db.field_create("event_date", "date", None).unwrap();
+        let f = db.field_get("event_date").unwrap().unwrap();
+
+        // Plain date
+        match db.coerce_field_value(&f, "2026-04-08").unwrap() {
+            TypedFieldValue::Date(s) => {
+                assert!(
+                    s.starts_with("2026-04-08T00:00:00"),
+                    "plain date normalized to midnight RFC3339, got {s}"
+                );
+                assert!(s.ends_with("+00:00") || s.ends_with("Z"));
+            }
+            other => panic!("expected Date, got {other:?}"),
+        }
+
+        // Existing RFC 3339 path still works
+        match db.coerce_field_value(&f, "2026-04-08T12:34:56Z").unwrap() {
+            TypedFieldValue::Date(s) => assert!(s.contains("2026-04-08T12:34:56")),
+            other => panic!("expected Date, got {other:?}"),
+        }
+
+        // Garbage still rejected
+        assert!(db.coerce_field_value(&f, "not-a-date").is_err());
     }
 
     #[test]

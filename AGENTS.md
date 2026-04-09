@@ -7,9 +7,22 @@ them without an MCP server, schema file, or browser dashboard.
 
 ## Current state
 
-- **Version**: v0.2.0 (agent-native rearchitecture, breaking release)
+- **Version**: v0.3.1 (emergency hardening on top of v0.3.0 production-grade 10k foundations)
 - **Research**: see [/research](./research) for the five dossiers that informed the original design
-- **Phase plan**: [docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md)
+- **Recent plans**:
+  - [v0.2 rearchitecture](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md) (shipped as v0.2.0)
+  - [v0.3 production-grade 10k](./docs/plans/2026-04-09-phase-8-v0.3-production-grade-10k.md) (shipped as v0.3.0)
+  - [v0.3.1 emergency hardening](./docs/plans/2026-04-09-phase-9-v0.3.1-emergency-hardening.md) (shipped as v0.3.1)
+
+## Production hardening (v0.3.x)
+
+What "production-grade" means in this codebase:
+
+- **Send pipeline reliability**: 429/5xx retry with exponential backoff [500ms, 1s, 2s, 4s], up to 4 retries; per-chunk DB transactions; preloaded suppression `HashSet` for O(1) lookups; 30-day complaint/bounce rate guard in preflight; resumable sends with atomic broadcast lock CAS (no double-send race even on concurrent invocation).
+- **Subprocess safety**: every `email-cli` call has a 120-second default timeout (`MLC_EMAIL_CLI_TIMEOUT_SEC` env var to override). Hung subprocesses are killed via SIGKILL and surfaced as `email_cli_timeout` transient errors that feed the existing retry path.
+- **Schema safety**: `Db::open` fails fast (exit code 2, `db_schema_too_new`) when the on-disk schema version is newer than what this binary supports — no more silent column-mismatch errors after a binary downgrade.
+- **GDPR compliance**: `contact erase --confirm` writes a `gdpr_erasure` suppression tombstone before deleting the contact row (atomic transaction; the email is never momentarily absent from both).
+- **Operator escape hatches**: `broadcast send <id> --force-unlock` overrides a held send lock when the previous process is confirmed dead (use only after `ps aux | grep mailing-list-cli`).
 
 ## Conventions
 

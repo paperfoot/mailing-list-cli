@@ -65,6 +65,58 @@ fn agent_info_lists_phase_3_commands() {
 }
 
 #[test]
+fn agent_info_includes_v0_3_1_surface() {
+    // v0.3.1: regression guard against agent-info drifting from the live
+    // CLI surface. When you add a new subcommand or rename one, you must
+    // update both the agent_info.rs source AND this list. When you forget
+    // to update agent-info, this test fails.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    let out = cmd.args(["--json", "agent-info"]).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let manifest: Value = serde_json::from_str(&stdout).unwrap();
+
+    let commands = manifest
+        .get("commands")
+        .and_then(|c| c.as_object())
+        .expect("agent-info must have a `commands` object");
+
+    // Each entry must appear as a key prefix in the commands dictionary.
+    let must_have_prefixes = [
+        "contact erase",
+        "broadcast resume",
+        "broadcast send",
+        "template render",
+    ];
+    for needle in must_have_prefixes {
+        assert!(
+            commands.keys().any(|k| k.starts_with(needle)),
+            "agent-info commands list missing entry starting with `{needle}` — manifest has drifted from the live CLI surface"
+        );
+    }
+
+    // The version field must reflect Cargo's compile-time version.
+    let version = manifest
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "agent-info version field should reflect CARGO_PKG_VERSION"
+    );
+
+    // v0.3.1 env vars must be advertised.
+    let env_vars = manifest
+        .get("env_vars")
+        .and_then(|e| e.as_object())
+        .expect("agent-info must advertise env_vars");
+    assert!(
+        env_vars.contains_key("MLC_EMAIL_CLI_TIMEOUT_SEC"),
+        "agent-info env_vars must include MLC_EMAIL_CLI_TIMEOUT_SEC (v0.3.1 timeout knob)"
+    );
+}
+
+#[test]
 fn version_flag_exits_zero() {
     let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
     cmd.arg("--version")
@@ -1693,7 +1745,7 @@ fn agent_info_lists_phase_4_commands() {
     let commands = v["commands"].as_object().unwrap();
     for key in [
         "template create <name> [--subject <text>] [--from-file <path>]",
-        "template render <name> [--with-data <file.json>] [--with-placeholders]",
+        "template render <name> [--with-data <file.json>] [--with-placeholders] [--raw]",
         "template lint <name>",
     ] {
         assert!(commands.contains_key(key), "agent-info missing {key}");

@@ -10,6 +10,26 @@ pub struct Db {
     pub conn: Connection,
 }
 
+/// v0.3.2 (F2.1): A row from the `broadcast_send_attempt` write-ahead log.
+/// One row per `(broadcast_id, chunk_index, request_sha256)` triple. The
+/// `state` field encodes the lifecycle: `prepared` → `esp_acked` → `applied`,
+/// or `failed` as a terminal error state. `esp_response_json` is populated
+/// only after `state` advances past `prepared` and stores the raw email-cli
+/// response so a later run can reconcile without re-calling email-cli.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // several fields are read only in tests + forensic SQL inspection
+pub struct SendAttempt {
+    pub id: i64,
+    pub broadcast_id: i64,
+    pub chunk_index: i64,
+    pub request_sha256: String,
+    pub batch_file_path: String,
+    pub state: String,
+    pub esp_response_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// v0.3.1: Result of attempting to acquire a broadcast send lock.
 ///
 /// `broadcast_try_acquire_send_lock` does atomic CAS via UPDATE inside a
@@ -1283,6 +1303,181 @@ impl Db {
         }
     }
 
+    // ─── v0.3.2 (F2.1): broadcast send attempt write-ahead log ───────────
+
+    /// Insert a new attempt row in the `prepared` state, BEFORE calling
+    /// email-cli batch send. Returns the row id. Idempotent: if a row with
+    /// the same `(broadcast_id, chunk_index, request_sha256)` already exists
+    /// (e.g. retry after a crash), returns its id without creating a
+    /// duplicate.
+    #[allow(dead_code)]
+    pub fn broadcast_send_attempt_insert(
+        &self,
+        broadcast_id: i64,
+        chunk_index: i64,
+        request_sha256: &str,
+        batch_file_path: &str,
+    ) -> Result<i64, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "INSERT OR IGNORE INTO broadcast_send_attempt
+                (broadcast_id, chunk_index, request_sha256, batch_file_path,
+                 state, esp_response_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'prepared', NULL, ?5, ?5)",
+            params![
+                broadcast_id,
+                chunk_index,
+                request_sha256,
+                batch_file_path,
+                now
+            ],
+        );
+        match result {
+            Ok(rows) if rows > 0 => Ok(self.conn.last_insert_rowid()),
+            Ok(_) => {
+                // Row already existed (UNIQUE conflict on the triple).
+                // Return the existing id.
+                self.conn
+                    .query_row(
+                        "SELECT id FROM broadcast_send_attempt
+                         WHERE broadcast_id = ?1 AND chunk_index = ?2 AND request_sha256 = ?3",
+                        params![broadcast_id, chunk_index, request_sha256],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map_err(|e| AppError::Transient {
+                        code: "send_attempt_lookup_failed".into(),
+                        message: format!("could not look up existing send attempt: {e}"),
+                        suggestion: "Retry the command".into(),
+                    })
+            }
+            Err(e) => Err(AppError::Transient {
+                code: "send_attempt_insert_failed".into(),
+                message: format!("could not insert send attempt: {e}"),
+                suggestion: "Check DB disk space and WAL permissions".into(),
+            }),
+        }
+    }
+
+    /// Mark a `prepared` attempt as `esp_acked` and store the raw email-cli
+    /// response JSON. Called immediately after `email-cli batch send` returns
+    /// success and BEFORE the local recipient UPDATE transaction.
+    #[allow(dead_code)]
+    pub fn broadcast_send_attempt_mark_esp_acked(
+        &self,
+        attempt_id: i64,
+        response_json: &str,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE broadcast_send_attempt
+                 SET state = 'esp_acked', esp_response_json = ?1, updated_at = ?2
+                 WHERE id = ?3",
+                params![response_json, now, attempt_id],
+            )
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_update_failed".into(),
+                message: format!("could not mark send attempt esp_acked: {e}"),
+                suggestion: "Check DB disk space".into(),
+            })?;
+        Ok(())
+    }
+
+    /// Mark an `esp_acked` attempt as `applied` after the local recipient
+    /// UPDATE transaction has committed. This is the terminal happy state.
+    #[allow(dead_code)]
+    pub fn broadcast_send_attempt_mark_applied(&self, attempt_id: i64) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE broadcast_send_attempt
+                 SET state = 'applied', updated_at = ?1
+                 WHERE id = ?2",
+                params![now, attempt_id],
+            )
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_update_failed".into(),
+                message: format!("could not mark send attempt applied: {e}"),
+                suggestion: "Check DB disk space".into(),
+            })?;
+        Ok(())
+    }
+
+    /// Mark a `prepared` attempt as `failed` (terminal). Used when
+    /// email-cli returns a permanent error.
+    #[allow(dead_code)]
+    pub fn broadcast_send_attempt_mark_failed(&self, attempt_id: i64) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE broadcast_send_attempt
+                 SET state = 'failed', updated_at = ?1
+                 WHERE id = ?2",
+                params![now, attempt_id],
+            )
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_update_failed".into(),
+                message: format!("could not mark send attempt failed: {e}"),
+                suggestion: "Check DB disk space".into(),
+            })?;
+        Ok(())
+    }
+
+    /// Return all send attempt rows for a broadcast in the given state.
+    /// Used by the pipeline at start-of-send to (a) reconcile any
+    /// `esp_acked` attempts from a previous run, and (b) detect any
+    /// `prepared` attempts which indicate indeterminate state requiring
+    /// operator intervention.
+    #[allow(dead_code)]
+    pub fn broadcast_send_attempts_in_state(
+        &self,
+        broadcast_id: i64,
+        state: &str,
+    ) -> Result<Vec<SendAttempt>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, broadcast_id, chunk_index, request_sha256, batch_file_path,
+                        state, esp_response_json, created_at, updated_at
+                 FROM broadcast_send_attempt
+                 WHERE broadcast_id = ?1 AND state = ?2
+                 ORDER BY chunk_index ASC",
+            )
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_query_failed".into(),
+                message: format!("prepare send_attempt query: {e}"),
+                suggestion: "Retry".into(),
+            })?;
+        let rows = stmt
+            .query_map(params![broadcast_id, state], |r| {
+                Ok(SendAttempt {
+                    id: r.get(0)?,
+                    broadcast_id: r.get(1)?,
+                    chunk_index: r.get(2)?,
+                    request_sha256: r.get(3)?,
+                    batch_file_path: r.get(4)?,
+                    state: r.get(5)?,
+                    esp_response_json: r.get(6)?,
+                    created_at: r.get(7)?,
+                    updated_at: r.get(8)?,
+                })
+            })
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_query_failed".into(),
+                message: format!("query send_attempts: {e}"),
+                suggestion: "Retry".into(),
+            })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| AppError::Transient {
+                code: "send_attempt_row_decode_failed".into(),
+                message: format!("decode send_attempt row: {e}"),
+                suggestion: "Database may be corrupt".into(),
+            })?);
+        }
+        Ok(out)
+    }
+
     #[allow(dead_code)]
     pub fn broadcast_set_scheduled(&self, id: i64, scheduled_at: &str) -> Result<(), AppError> {
         self.conn
@@ -1778,8 +1973,22 @@ impl Db {
     /// v0.3: used by the broadcast send preflight to refuse sends that
     /// would worsen domain reputation. Unlike `report_deliverability`,
     /// which aggregates from broadcast columns, this queries the `event`
-    /// table directly so it reflects the actual webhook stream — which
-    /// is what Gmail/Yahoo use to score your reputation in real time.
+    /// table directly.
+    ///
+    /// **v0.3.2 (F3.2) APPROXIMATE**: the `event` table is populated by
+    /// `webhook poll`, which paginates `email-cli email list` by email ID
+    /// and reads only the `last_event` field per row, then advances a
+    /// cursor by max email ID seen. This means:
+    /// 1. Later state changes on already-seen emails are invisible
+    /// 2. Even visible state is lossy — only the most recent event per
+    ///    email is recorded, never the full history
+    ///
+    /// As a result, the rates computed here are **best-effort approximations**,
+    /// not exact event counts. The guards still fire and are still useful
+    /// safety nets, but operators should not over-trust the exact percentages.
+    /// Source: GPT Pro F3.2 from 2026-04-09 hardening review. The proper fix
+    /// is in v0.5+ via an upstream change to email-cli or a rolling-window
+    /// snapshot diff. See `docs/email-cli-gap-analysis.md`.
     pub fn historical_send_rates(&self, days: i64) -> Result<(f64, f64, i64), AppError> {
         let since = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
         let delivered: i64 = self
@@ -2649,6 +2858,159 @@ mod tests {
             .unwrap();
         assert!(pid.is_none(), "locked_by_pid should be NULL after clear");
         assert!(locked_at.is_none(), "locked_at should be NULL after clear");
+    }
+
+    // ─── v0.3.2 (F2.1): broadcast send attempt write-ahead log ────────────
+
+    #[test]
+    fn attempt_table_created_by_migration_0005() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        // The schema_version row should be present.
+        let row: String = db
+            .conn
+            .query_row(
+                "SELECT version FROM schema_version WHERE version = '0005_broadcast_send_attempt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(row, "0005_broadcast_send_attempt");
+        // The table should exist with the expected columns.
+        let cols: Vec<String> = db
+            .conn
+            .prepare("SELECT name FROM pragma_table_info('broadcast_send_attempt') ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for needle in [
+            "id",
+            "broadcast_id",
+            "chunk_index",
+            "request_sha256",
+            "batch_file_path",
+            "state",
+            "esp_response_json",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                cols.contains(&needle.to_string()),
+                "broadcast_send_attempt missing column `{needle}`, has: {cols:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn attempt_state_transitions_prepared_to_acked_to_applied() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+        let bid = db.broadcast_create("b", tid, "list", list_id).unwrap();
+
+        let attempt_id = db
+            .broadcast_send_attempt_insert(bid, 0, "abc123", "/tmp/batch-0.json")
+            .unwrap();
+        assert!(attempt_id > 0);
+
+        // State should start as 'prepared'
+        let attempts = db
+            .broadcast_send_attempts_in_state(bid, "prepared")
+            .unwrap();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].state, "prepared");
+        assert!(attempts[0].esp_response_json.is_none());
+
+        // Mark esp_acked with a fake response
+        db.broadcast_send_attempt_mark_esp_acked(attempt_id, r#"{"items":[]}"#)
+            .unwrap();
+        let attempts = db
+            .broadcast_send_attempts_in_state(bid, "esp_acked")
+            .unwrap();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(
+            attempts[0].esp_response_json.as_deref(),
+            Some(r#"{"items":[]}"#)
+        );
+
+        // Mark applied
+        db.broadcast_send_attempt_mark_applied(attempt_id).unwrap();
+        let applied = db.broadcast_send_attempts_in_state(bid, "applied").unwrap();
+        assert_eq!(applied.len(), 1);
+        let prepared = db
+            .broadcast_send_attempts_in_state(bid, "prepared")
+            .unwrap();
+        assert_eq!(prepared.len(), 0);
+    }
+
+    #[test]
+    fn attempt_insert_is_idempotent_on_duplicate_triple() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+        let bid = db.broadcast_create("b", tid, "list", list_id).unwrap();
+
+        let id1 = db
+            .broadcast_send_attempt_insert(bid, 0, "samehash", "/tmp/batch-0.json")
+            .unwrap();
+        let id2 = db
+            .broadcast_send_attempt_insert(bid, 0, "samehash", "/tmp/batch-0.json")
+            .unwrap();
+        assert_eq!(
+            id1, id2,
+            "duplicate (broadcast,chunk,sha) should return existing id, not create a new row"
+        );
+    }
+
+    #[test]
+    fn attempt_failed_terminal() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+        let bid = db.broadcast_create("b", tid, "list", list_id).unwrap();
+
+        let attempt_id = db
+            .broadcast_send_attempt_insert(bid, 0, "fhash", "/tmp/f.json")
+            .unwrap();
+        db.broadcast_send_attempt_mark_failed(attempt_id).unwrap();
+        let failed = db.broadcast_send_attempts_in_state(bid, "failed").unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].state, "failed");
+    }
+
+    #[test]
+    fn attempts_in_state_filters_by_broadcast_id() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "Hi", "<p>Hi</p>").unwrap();
+        let list_id = db.list_create("news", None, "seg_x").unwrap();
+        let b1 = db.broadcast_create("a", tid, "list", list_id).unwrap();
+        let b2 = db.broadcast_create("b", tid, "list", list_id).unwrap();
+
+        db.broadcast_send_attempt_insert(b1, 0, "h1", "/p1")
+            .unwrap();
+        db.broadcast_send_attempt_insert(b2, 0, "h2", "/p2")
+            .unwrap();
+        db.broadcast_send_attempt_insert(b2, 1, "h3", "/p3")
+            .unwrap();
+
+        assert_eq!(
+            db.broadcast_send_attempts_in_state(b1, "prepared")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.broadcast_send_attempts_in_state(b2, "prepared")
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     // ─── v0.3.1: schema version safety check ──────────────────────────────

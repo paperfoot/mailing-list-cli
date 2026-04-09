@@ -251,4 +251,34 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         ALTER TABLE broadcast ADD COLUMN locked_at TEXT;
         "#,
     ),
+    // v0.3.2: write-ahead attempt log for broadcast send chunks. The
+    // pre-v0.3.2 pipeline called email-cli batch send first and only THEN
+    // opened a transaction to mark recipients sent locally. A crash between
+    // ESP acceptance and the local commit caused resume to resend the chunk
+    // (recipients received duplicate emails). This table is a write-ahead
+    // log: prepared → esp_acked → applied. On resume we reconcile any
+    // esp_acked attempts (re-applying their stored response) before
+    // processing new chunks. A 'prepared' attempt that never advanced
+    // indicates indeterminate state (we cannot tell if email-cli succeeded);
+    // resume refuses to proceed and surfaces the indeterminate chunks for
+    // operator decision. See docs/specs/2026-04-09-v0.3.2-emergency-hardening-round-2.md.
+    (
+        "0005_broadcast_send_attempt",
+        r#"
+        CREATE TABLE broadcast_send_attempt (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broadcast_id INTEGER NOT NULL REFERENCES broadcast(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            request_sha256 TEXT NOT NULL,
+            batch_file_path TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('prepared', 'esp_acked', 'applied', 'failed')),
+            esp_response_json TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (broadcast_id, chunk_index, request_sha256)
+        );
+        CREATE INDEX idx_send_attempt_broadcast ON broadcast_send_attempt(broadcast_id);
+        CREATE INDEX idx_send_attempt_state ON broadcast_send_attempt(broadcast_id, state);
+        "#,
+    ),
 ];

@@ -24,6 +24,16 @@ use crate::segment::SegmentExpr;
 use crate::segment::compiler;
 use crate::template::{self, RenderError};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+
+/// v0.3.2 (F2.1): SHA-256 of the batch file bytes, used as the
+/// `request_sha256` column in `broadcast_send_attempt`. Lets us detect
+/// "same chunk replayed" idempotently across crashes.
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
+}
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
@@ -228,6 +238,105 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
     }
     db.broadcast_update_counts(id, to_send.len() as i64)?;
 
+    // v0.3.2 (F2.1): write-ahead reconciliation — handle any send attempts
+    // from a previous (crashed) run BEFORE processing new chunks.
+    //
+    // Two cases to handle:
+    //   1. `esp_acked` rows: email-cli succeeded but the local recipient
+    //      UPDATE never committed. We have the response_json stored, so we
+    //      can re-apply it locally without re-calling email-cli (no
+    //      duplicate sends). Mark applied.
+    //   2. `prepared` rows: email-cli MAY have succeeded but the response
+    //      was never recorded. We CANNOT determine whether Resend received
+    //      the chunk. Refuse to proceed and surface the chunks for operator
+    //      decision (the alternative — silently retrying — risks duplicate
+    //      sends; the alternative — silently skipping — risks missed sends.
+    //      Both are bad outcomes; the operator must choose).
+    {
+        let acked = db.broadcast_send_attempts_in_state(id, "esp_acked")?;
+        for attempt in acked {
+            eprintln!(
+                "broadcast {id}: reconciling chunk {} from previous run (esp_acked → applied)",
+                attempt.chunk_index
+            );
+            // Parse the stored applied_pairs and re-run the recipient UPDATE
+            // in the same transaction that flips the attempt to 'applied'.
+            let response: serde_json::Value = serde_json::from_str(
+                attempt.esp_response_json.as_deref().unwrap_or("{}"),
+            )
+            .map_err(|e| AppError::Transient {
+                code: "send_attempt_response_parse".into(),
+                message: format!(
+                    "could not parse stored esp_response_json for attempt {}: {e}",
+                    attempt.id
+                ),
+                suggestion: format!(
+                    "Inspect broadcast_send_attempt id={} manually: SELECT * FROM broadcast_send_attempt WHERE id={};",
+                    attempt.id, attempt.id
+                ),
+            })?;
+            let pairs = response
+                .get("applied_pairs")
+                .and_then(|p| p.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let now = chrono::Utc::now().to_rfc3339();
+            let tx = db.conn.transaction().map_err(|e| AppError::Transient {
+                code: "tx_begin_failed".into(),
+                message: format!("begin reconcile transaction failed: {e}"),
+                suggestion: "Retry — the DB is probably busy".into(),
+            })?;
+            for pair in &pairs {
+                let contact_id = pair.get("contact_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                let resend_id = pair.get("resend_id").and_then(|v| v.as_str()).unwrap_or("");
+                if contact_id == 0 || resend_id.is_empty() {
+                    continue;
+                }
+                tx.execute(
+                    "UPDATE broadcast_recipient
+                     SET status = 'sent', resend_email_id = ?1, sent_at = ?2
+                     WHERE broadcast_id = ?3 AND contact_id = ?4",
+                    rusqlite::params![resend_id, now, id, contact_id],
+                )
+                .map_err(|e| AppError::Transient {
+                    code: "recipient_reconcile_failed".into(),
+                    message: format!("reconcile recipient update: {e}"),
+                    suggestion: "Check DB disk space".into(),
+                })?;
+            }
+            tx.commit().map_err(|e| AppError::Transient {
+                code: "tx_commit_failed".into(),
+                message: format!("commit reconcile transaction failed: {e}"),
+                suggestion: "Retry — the DB is probably busy".into(),
+            })?;
+            db.broadcast_send_attempt_mark_applied(attempt.id)?;
+            // Update local already_sent so we don't try to re-send these
+            // contacts in the new chunk loop.
+            for pair in &pairs {
+                if let Some(cid) = pair.get("contact_id").and_then(|v| v.as_i64()) {
+                    to_send.retain(|c| c.id != cid);
+                }
+            }
+        }
+
+        let prepared = db.broadcast_send_attempts_in_state(id, "prepared")?;
+        if !prepared.is_empty() {
+            let chunk_indices: Vec<String> =
+                prepared.iter().map(|a| a.chunk_index.to_string()).collect();
+            return Err(AppError::Transient {
+                code: "broadcast_attempt_indeterminate".into(),
+                message: format!(
+                    "broadcast {id} has {} chunk(s) in indeterminate state from a previous run (chunks: {}). The previous process crashed between starting an email-cli call and recording the response — we cannot tell if Resend received the chunk(s) or not.",
+                    prepared.len(),
+                    chunk_indices.join(", ")
+                ),
+                suggestion: format!(
+                    "Inspect Resend dashboard or `email-cli email list` filtered by tag broadcast_id={id} to determine if the chunk(s) shipped. Then either: (a) manually mark applied with `sqlite3 STATE.DB \"UPDATE broadcast_send_attempt SET state='applied' WHERE id IN (...);\"` and re-run, or (b) mark failed with the same SQL pattern and re-run to retry the chunk. Refusing to auto-retry to avoid duplicate sends."
+                ),
+            });
+        }
+    }
+
     // 5-7. Per-recipient render (done inside the chunk loop below)
     // 8. Write JSON batch file + shell out in chunks of 100
     // v0.3.2 F13.1: hard-fail when MLC_UNSUBSCRIBE_SECRET is unset.
@@ -340,11 +449,50 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
         let batch_path = cache_dir.join(format!("broadcast-{id}-chunk-{chunk_idx}.json"));
         write_batch_file(&entries, &batch_path)?;
 
+        // v0.3.2 (F2.1): write-ahead attempt row BEFORE calling email-cli.
+        // The previous pipeline called email-cli first; a crash between the
+        // ESP ack and the local recipient UPDATE caused resume to resend the
+        // chunk. Now we record the attempt so resume can reconcile.
+        let batch_bytes = std::fs::read(&batch_path).map_err(|e| AppError::Transient {
+            code: "batch_file_read".into(),
+            message: format!("could not read batch file for hash: {e}"),
+            suggestion: "Retry the command".into(),
+        })?;
+        let request_sha256 = sha256_hex(&batch_bytes);
+        let attempt_id = db.broadcast_send_attempt_insert(
+            id,
+            chunk_idx as i64,
+            &request_sha256,
+            batch_path.to_str().unwrap_or(""),
+        )?;
+
         // Pass the recipient emails in input order so the wrapper can correlate
         // by index when the real Resend response omits the `to` field.
         let recipients_in_order: Vec<String> = chunk.iter().map(|c| c.email.clone()).collect();
         match cli.batch_send(&batch_path, &recipients_in_order) {
             Ok(results) => {
+                // v0.3.2 (F2.1): build the (contact_id, resend_id) correlation
+                // BEFORE the local UPDATE. Store it as the canonical
+                // applied_pairs in the attempt row, then mark esp_acked. This
+                // is the recovery point: if we crash between this mark and the
+                // UPDATE below, resume will reconcile from these stored pairs.
+                let mut applied_pairs: Vec<serde_json::Value> = Vec::with_capacity(results.len());
+                for (email, resend_id) in &results {
+                    if let Some(contact) =
+                        chunk.iter().find(|c| c.email.eq_ignore_ascii_case(email))
+                    {
+                        applied_pairs.push(json!({
+                            "contact_id": contact.id,
+                            "resend_id": resend_id
+                        }));
+                    }
+                }
+                let response_json = serde_json::to_string(&json!({
+                    "applied_pairs": applied_pairs
+                }))
+                .unwrap_or_else(|_| "{}".to_string());
+                db.broadcast_send_attempt_mark_esp_acked(attempt_id, &response_json)?;
+
                 // v0.3: wrap the per-chunk mark-sent updates in ONE
                 // transaction so the 100 fsyncs collapse into one.
                 let tx = db.conn.transaction().map_err(|e| AppError::Transient {
@@ -353,32 +501,41 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
                     suggestion: "Retry — the DB is probably busy".into(),
                 })?;
                 let now = chrono::Utc::now().to_rfc3339();
-                for (email, resend_id) in &results {
-                    if let Some(contact) =
-                        chunk.iter().find(|c| c.email.eq_ignore_ascii_case(email))
-                    {
-                        tx.execute(
-                            "UPDATE broadcast_recipient
-                             SET status = 'sent', resend_email_id = ?1, sent_at = ?2
-                             WHERE broadcast_id = ?3 AND contact_id = ?4",
-                            rusqlite::params![resend_id, now, id, contact.id],
-                        )
-                        .map_err(|e| AppError::Transient {
-                            code: "recipient_mark_sent_failed".into(),
-                            message: format!("mark sent: {e}"),
-                            suggestion: "Check DB disk space".into(),
-                        })?;
-                        sent_count += 1;
+                for pair in &applied_pairs {
+                    let contact_id = pair.get("contact_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let resend_id = pair.get("resend_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if contact_id == 0 || resend_id.is_empty() {
+                        continue;
                     }
+                    tx.execute(
+                        "UPDATE broadcast_recipient
+                         SET status = 'sent', resend_email_id = ?1, sent_at = ?2
+                         WHERE broadcast_id = ?3 AND contact_id = ?4",
+                        rusqlite::params![resend_id, now, id, contact_id],
+                    )
+                    .map_err(|e| AppError::Transient {
+                        code: "recipient_mark_sent_failed".into(),
+                        message: format!("mark sent: {e}"),
+                        suggestion: "Check DB disk space".into(),
+                    })?;
+                    sent_count += 1;
                 }
                 tx.commit().map_err(|e| AppError::Transient {
                     code: "tx_commit_failed".into(),
                     message: format!("commit mark-sent transaction failed: {e}"),
                     suggestion: "Retry — the DB is probably busy".into(),
                 })?;
+
+                // v0.3.2 (F2.1): mark the attempt applied as the final step.
+                // If we crash between the tx.commit above and this mark, the
+                // attempt stays in esp_acked and the next reconcile pass will
+                // replay the (now-already-applied) UPDATE — which is a no-op
+                // because the recipient rows are already in 'sent' state. Safe.
+                db.broadcast_send_attempt_mark_applied(attempt_id)?;
             }
             Err(e) => {
                 failed_count += chunk.len();
+                let _ = db.broadcast_send_attempt_mark_failed(attempt_id);
                 eprintln!("chunk {chunk_idx} failed: {}", e.message());
             }
         }

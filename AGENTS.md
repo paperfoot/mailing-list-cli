@@ -18,11 +18,13 @@ them without an MCP server, schema file, or browser dashboard.
 
 What "production-grade" means in this codebase:
 
-- **Send pipeline reliability**: 429/5xx retry with exponential backoff [500ms, 1s, 2s, 4s], up to 4 retries; per-chunk DB transactions; preloaded suppression `HashSet` for O(1) lookups; 30-day complaint/bounce rate guard in preflight; resumable sends with atomic broadcast lock CAS (no double-send race even on concurrent invocation).
+- **Send pipeline reliability**: 429/5xx retry with exponential backoff [500ms, 1s, 2s, 4s], up to 4 retries; per-chunk DB transactions; preloaded suppression `HashSet` for O(1) lookups; resumable sends with atomic broadcast lock CAS (no double-send race even on concurrent invocation); **v0.3.2 write-ahead `broadcast_send_attempt` table** that records ESP acceptance BEFORE the local recipient UPDATE, so a crash between the two cannot cause duplicate sends on resume — it reconciles from the stored response.
 - **Subprocess safety**: every `email-cli` call has a 120-second default timeout (`MLC_EMAIL_CLI_TIMEOUT_SEC` env var to override). Hung subprocesses are killed via SIGKILL and surfaced as `email_cli_timeout` transient errors that feed the existing retry path.
 - **Schema safety**: `Db::open` fails fast (exit code 2, `db_schema_too_new`) when the on-disk schema version is newer than what this binary supports — no more silent column-mismatch errors after a binary downgrade.
+- **Unsubscribe link security**: `MLC_UNSUBSCRIBE_SECRET` is required (v0.3.2) — `broadcast send` refuses to sign tokens with a dev fallback. HMAC-SHA256.
 - **GDPR compliance**: `contact erase --confirm` writes a `gdpr_erasure` suppression tombstone before deleting the contact row (atomic transaction; the email is never momentarily absent from both).
 - **Operator escape hatches**: `broadcast send <id> --force-unlock` overrides a held send lock when the previous process is confirmed dead (use only after `ps aux | grep mailing-list-cli`).
+- **Honest limitations**: the 30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading only `last_event` per row. The guards still fire and remain useful safety nets, but the exact percentages are best-effort approximations — see `agent-info → known_limitations` and the docstring on `historical_send_rates`. Proper fix is v0.5+ pending an upstream change to email-cli or a rolling-window snapshot diff. Source: GPT Pro F3.2 from 2026-04-09 hardening review.
 
 ## Conventions
 

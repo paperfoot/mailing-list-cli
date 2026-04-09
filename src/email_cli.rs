@@ -287,6 +287,59 @@ impl EmailCli {
         Ok(())
     }
 
+    /// Shell out to `email-cli domain list` and return the array of domain
+    /// objects. Each entry has `name`, `region`, `status` ('verified' |
+    /// 'pending' | 'failed' | 'unverified'), and `capabilities`.
+    ///
+    /// v0.3: used by the `health` check and broadcast preflight to confirm
+    /// the sender domain is verified before a send.
+    ///
+    /// Note: email-cli v0.6.3 does NOT expose open/click tracking settings
+    /// or Resend domain UUIDs via `domain list`. The tracking-config
+    /// surfacing originally planned for v0.3 Task 7 is therefore reduced
+    /// to domain-status surfacing only; the full open/click tracking
+    /// surfacing is deferred to v0.3.1 pending an upstream email-cli fix
+    /// (issue: expose `open_tracking`, `click_tracking`, and `id` in the
+    /// `domain list` output).
+    #[allow(dead_code)]
+    pub fn domain_list(&self) -> Result<Vec<Value>, AppError> {
+        self.throttle();
+        let output = Command::new(&self.path)
+            .args(["--json", "domain", "list"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| AppError::Config {
+                code: "email_cli_invoke_failed".into(),
+                message: format!("could not run email-cli domain list: {e}"),
+                suggestion: "Check that email-cli is on PATH".into(),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Transient {
+                code: "domain_list_failed".into(),
+                message: format!(
+                    "email-cli domain list failed: {}",
+                    stderr.lines().next().unwrap_or("(no stderr)")
+                ),
+                suggestion: "Run `email-cli profile test` to verify Resend connectivity".into(),
+            });
+        }
+        let parsed: Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| AppError::Transient {
+                code: "domain_list_parse".into(),
+                message: format!("invalid JSON from email-cli domain list: {e}"),
+                suggestion: "Check email-cli version compatibility".into(),
+            })?;
+        // Shape: {"data": [ {name, region, status, capabilities}, ... ] }
+        let arr = parsed
+            .get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr)
+    }
+
     /// Shell out to `email-cli batch send --file <path>`. Real email-cli
     /// returns `{"data": {"data": [{"id": "<resend-uuid>"}, ...]}}` — items
     /// match input order, no `to` field. The caller must pass the recipients

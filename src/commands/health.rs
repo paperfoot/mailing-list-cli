@@ -52,6 +52,69 @@ pub fn run(format: Format) -> Result<(), AppError> {
         ));
     }
 
+    // 5. (v0.3) sender domain is verified in Resend. We cannot currently
+    // surface open/click tracking config because email-cli v0.6.3's
+    // `domain list` output doesn't include those fields — that surfacing is
+    // deferred to v0.3.1 pending an upstream fix. What we CAN do right now
+    // is confirm the sender domain is registered and verified, which
+    // catches the most common "why didn't my broadcast send" failure mode.
+    if let Some(from) = config.sender.from.as_deref() {
+        if let Some(at) = from.rfind('@') {
+            let sender_domain = &from[at + 1..];
+            match cli.domain_list() {
+                Ok(domains) => {
+                    let matching = domains.iter().find(|d| {
+                        d.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|n| n.eq_ignore_ascii_case(sender_domain))
+                            .unwrap_or(false)
+                    });
+                    match matching {
+                        Some(d) => {
+                            let status = d
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            if status == "verified" {
+                                checks.push((
+                                    "sender_domain_verified",
+                                    "ok",
+                                    format!("{sender_domain} verified in Resend"),
+                                ));
+                            } else {
+                                checks.push((
+                                    "sender_domain_verified",
+                                    "warn",
+                                    format!(
+                                        "{sender_domain} is registered in Resend but status is '{status}' — runs will bounce at the Resend boundary until the domain is verified. Enable DNS records and run `email-cli domain verify`."
+                                    ),
+                                ));
+                            }
+                        }
+                        None => {
+                            checks.push((
+                                "sender_domain_verified",
+                                "warn",
+                                format!(
+                                    "{sender_domain} is not registered in Resend. Run `email-cli domain create {sender_domain}` followed by `email-cli domain verify` before sending broadcasts."
+                                ),
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    // email-cli itself already has a check above; if that
+                    // passed but domain_list failed, still flag it.
+                    checks.push((
+                        "sender_domain_verified",
+                        "warn",
+                        format!("could not query domain list: {}", e.message()),
+                    ));
+                }
+            }
+        }
+    }
+
     let status = if checks.iter().any(|c| c.1 == "fail") {
         "fail"
     } else if checks.iter().any(|c| c.1 == "warn") {

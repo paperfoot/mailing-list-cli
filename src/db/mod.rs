@@ -1542,6 +1542,56 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(query_err)
     }
 
+    /// Compute complaint + bounce rate over the last `days` days based on
+    /// the `event` table. Returns `(complaint_rate, bounce_rate, delivered)`
+    /// where both rates are fractions (0.005 = 0.5%) over the delivered
+    /// count in the same window. Returns `(0.0, 0.0, 0)` if there are no
+    /// delivered events in the window.
+    ///
+    /// v0.3: used by the broadcast send preflight to refuse sends that
+    /// would worsen domain reputation. Unlike `report_deliverability`,
+    /// which aggregates from broadcast columns, this queries the `event`
+    /// table directly so it reflects the actual webhook stream — which
+    /// is what Gmail/Yahoo use to score your reputation in real time.
+    pub fn historical_send_rates(&self, days: i64) -> Result<(f64, f64, i64), AppError> {
+        let since = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let delivered: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM event
+                 WHERE type = 'email.delivered' AND received_at >= ?1",
+                rusqlite::params![since],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        if delivered == 0 {
+            return Ok((0.0, 0.0, 0));
+        }
+        let complained: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM event
+                 WHERE type = 'email.complained' AND received_at >= ?1",
+                rusqlite::params![since],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        let bounced: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM event
+                 WHERE type = 'email.bounced' AND received_at >= ?1",
+                rusqlite::params![since],
+                |r| r.get(0),
+            )
+            .map_err(query_err)?;
+        Ok((
+            complained as f64 / delivered as f64,
+            bounced as f64 / delivered as f64,
+            delivered,
+        ))
+    }
+
     pub fn report_deliverability(
         &self,
         window_days: i64,
@@ -2086,5 +2136,68 @@ mod tests {
         let db = Db::open_at(tmp.path()).unwrap();
         let set = db.suppression_all_emails().unwrap();
         assert!(set.is_empty());
+    }
+
+    #[test]
+    fn historical_send_rates_returns_window_rates() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        // Seed 1000 delivered events and 5 complained events in the last
+        // 30 days. Expect complaint_rate = 0.005, bounce_rate = 0.
+        let now = chrono::Utc::now().to_rfc3339();
+        for i in 0..1_000 {
+            db.conn
+                .execute(
+                    "INSERT INTO event (type, resend_email_id, payload_json, received_at)
+                     VALUES ('email.delivered', ?1, '{}', ?2)",
+                    rusqlite::params![format!("em_d_{i}"), now],
+                )
+                .unwrap();
+        }
+        for i in 0..5 {
+            db.conn
+                .execute(
+                    "INSERT INTO event (type, resend_email_id, payload_json, received_at)
+                     VALUES ('email.complained', ?1, '{}', ?2)",
+                    rusqlite::params![format!("em_c_{i}"), now],
+                )
+                .unwrap();
+        }
+        let (complaint_rate, bounce_rate, delivered) = db.historical_send_rates(30).unwrap();
+        assert_eq!(delivered, 1_000);
+        assert!(
+            (complaint_rate - 0.005).abs() < 1e-6,
+            "complaint_rate: {complaint_rate}"
+        );
+        assert!(bounce_rate.abs() < 1e-6, "bounce_rate: {bounce_rate}");
+    }
+
+    #[test]
+    fn historical_send_rates_empty_window_returns_zero() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let (complaint_rate, bounce_rate, delivered) = db.historical_send_rates(30).unwrap();
+        assert_eq!(delivered, 0);
+        assert_eq!(complaint_rate, 0.0);
+        assert_eq!(bounce_rate, 0.0);
+    }
+
+    #[test]
+    fn historical_send_rates_excludes_old_events() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        // 100 delivered events FROM 60 DAYS AGO — outside the 30-day window.
+        let old = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        for i in 0..100 {
+            db.conn
+                .execute(
+                    "INSERT INTO event (type, resend_email_id, payload_json, received_at)
+                     VALUES ('email.delivered', ?1, '{}', ?2)",
+                    rusqlite::params![format!("em_old_{i}"), old],
+                )
+                .unwrap();
+        }
+        let (_, _, delivered) = db.historical_send_rates(30).unwrap();
+        assert_eq!(delivered, 0, "old events should be excluded from window");
     }
 }

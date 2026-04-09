@@ -84,6 +84,7 @@ pub fn send_broadcast(id: i64) -> Result<PipelineResult, AppError> {
 
     // 3. Pre-flight invariants
     preflight_checks(
+        &db,
         &config,
         &template.html_source,
         &template.subject,
@@ -446,8 +447,19 @@ fn resolve_target(db: &Db, broadcast: &Broadcast) -> Result<Vec<Contact>, AppErr
     }
 }
 
+/// Minimum delivered events in the 30-day window before the
+/// complaint/bounce rate guards are enforced. Prevents a brand-new account
+/// from being blocked by its first 10 bounces where the denominator is
+/// statistically meaningless.
+const MIN_DELIVERED_FOR_RATE_CHECK: i64 = 100;
+
+/// Window (in days) for the complaint/bounce rate guards. Matches the
+/// de-facto standard that Gmail/Yahoo use for reputation scoring.
+const RATE_WINDOW_DAYS: i64 = 30;
+
 #[allow(dead_code)]
 fn preflight_checks(
+    db: &Db,
     config: &Config,
     html_source: &str,
     subject_source: &str,
@@ -503,7 +515,37 @@ fn preflight_checks(
             suggestion: "Raise the cap in config.toml [guards] or target a smaller segment".into(),
         });
     }
-    // Invariant 4/5: complaint and bounce rate — Phase 6 job. Stubbed pass.
+    // Invariant 4+5 (v0.3): complaint and bounce rate over the last 30 days.
+    // Statistically-meaningful threshold: require at least 100 delivered
+    // events in the window before enforcing, so a brand-new account isn't
+    // blocked by its first 10 bounces.
+    let (complaint_rate, bounce_rate, delivered) = db.historical_send_rates(RATE_WINDOW_DAYS)?;
+    if delivered >= MIN_DELIVERED_FOR_RATE_CHECK {
+        if complaint_rate > config.guards.max_complaint_rate {
+            return Err(AppError::BadInput {
+                code: "complaint_rate_exceeds_guard".into(),
+                message: format!(
+                    "historical complaint rate {:.4}% over last {} days exceeds max_complaint_rate {:.4}% (delivered={delivered})",
+                    complaint_rate * 100.0,
+                    RATE_WINDOW_DAYS,
+                    config.guards.max_complaint_rate * 100.0,
+                ),
+                suggestion: "Investigate recent complaint sources before sending more; consider pruning the list or pausing sends for 7 days. Override by raising [guards].max_complaint_rate in config.toml (NOT recommended — Gmail/Yahoo will block you at 0.3%).".into(),
+            });
+        }
+        if bounce_rate > config.guards.max_bounce_rate {
+            return Err(AppError::BadInput {
+                code: "bounce_rate_exceeds_guard".into(),
+                message: format!(
+                    "historical bounce rate {:.4}% over last {} days exceeds max_bounce_rate {:.4}% (delivered={delivered})",
+                    bounce_rate * 100.0,
+                    RATE_WINDOW_DAYS,
+                    config.guards.max_bounce_rate * 100.0,
+                ),
+                suggestion: "Prune hard-bounced contacts before sending more; most have already been auto-suppressed but list hygiene matters. Override by raising [guards].max_bounce_rate (NOT recommended).".into(),
+            });
+        }
+    }
     Ok(())
 }
 

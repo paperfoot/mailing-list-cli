@@ -85,6 +85,33 @@ impl Db {
                     suggestion: "Database may be in inconsistent state".into(),
                 })?;
         }
+
+        // Schema-too-new safety check: a binary downgrade (or running an old
+        // binary against a DB last touched by a newer binary) used to silently
+        // run queries against tables whose shape it didn't expect, producing
+        // confusing column-mismatch errors. Fail fast at open time instead.
+        //
+        // Migration version strings follow the convention `NNNN_name` (4-digit
+        // numeric prefix), so lexicographic ordering matches numerical ordering.
+        let last_known: &str = migrations::MIGRATIONS.last().map(|(v, _)| *v).unwrap_or("");
+        let max_in_db: Option<String> = self
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .ok()
+            .flatten();
+        if let Some(max) = max_in_db {
+            if max.as_str() > last_known {
+                return Err(AppError::Config {
+                    code: "db_schema_too_new".into(),
+                    message: format!(
+                        "database schema version `{max}` is newer than what this binary supports (max known: `{last_known}`)"
+                    ),
+                    suggestion: format!(
+                        "Upgrade mailing-list-cli to a version that knows about migration `{max}`. Running this binary against a newer DB risks data corruption."
+                    ),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -2370,5 +2397,47 @@ mod tests {
         }
         let (_, _, delivered) = db.historical_send_rates(30).unwrap();
         assert_eq!(delivered, 0, "old events should be excluded from window");
+    }
+
+    // ─── v0.3.1: schema version safety check ──────────────────────────────
+
+    #[test]
+    fn db_open_succeeds_on_known_schema() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // First open creates the schema and applies all known migrations.
+        let _ = Db::open_at(tmp.path()).unwrap();
+        // Second open finds MAX(version) == last_known and proceeds.
+        let _ = Db::open_at(tmp.path()).unwrap();
+    }
+
+    #[test]
+    fn db_open_fails_fast_on_unknown_future_migration() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        // Bootstrap: open once to create the schema_version table.
+        {
+            let _ = Db::open_at(tmp.path()).unwrap();
+        }
+        // Inject a future migration version that this binary doesn't know about.
+        {
+            let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                rusqlite::params!["9999_imaginary_future", "2026-04-09T00:00:00Z"],
+            )
+            .unwrap();
+        }
+        // Re-open should now fail with Config error (exit 2).
+        match Db::open_at(tmp.path()) {
+            Ok(_) => panic!("expected Db::open_at to fail with db_schema_too_new"),
+            Err(err) => {
+                assert_eq!(err.exit_code(), crate::error::ExitCode::Config);
+                assert_eq!(err.code(), "db_schema_too_new");
+                assert!(
+                    err.message().contains("9999_imaginary_future"),
+                    "error message should mention the unknown version, got: {}",
+                    err.message()
+                );
+            }
+        }
     }
 }

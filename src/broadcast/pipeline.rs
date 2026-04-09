@@ -170,6 +170,19 @@ pub fn send_broadcast(id: i64) -> Result<PipelineResult, AppError> {
             to_send.push(recipient);
         }
     }
+
+    // v0.3: resume support — drop recipients already marked 'sent' from
+    // a previous interrupted run. Combined with Task 3's per-chunk
+    // transactions, this makes a mid-send crash cleanly recoverable via
+    // `broadcast resume <id>` (or `broadcast send <id>`, same handler).
+    let already_sent = db.broadcast_recipient_already_sent_ids(id)?;
+    let resume_skipped = already_sent.len();
+    if resume_skipped > 0 {
+        eprintln!(
+            "broadcast {id}: resume mode — {resume_skipped} recipient(s) already sent, skipping"
+        );
+        to_send.retain(|c| !already_sent.contains(&c.id));
+    }
     db.broadcast_update_counts(id, to_send.len() as i64)?;
 
     // 5-7. Per-recipient render (done inside the chunk loop below)

@@ -13,7 +13,11 @@ pub fn run(format: Format, action: BroadcastAction) -> Result<(), AppError> {
         BroadcastAction::Create(args) => create(format, args),
         BroadcastAction::Preview(args) => preview(format, args),
         BroadcastAction::Schedule(args) => schedule(format, args),
+        // Send and Resume are the same handler — both call the pipeline,
+        // which skips already-sent recipients. Resume is just a clearer
+        // name for recovering from a mid-send crash.
         BroadcastAction::Send(args) => send(format, args),
+        BroadcastAction::Resume(args) => send(format, args),
         BroadcastAction::Cancel(args) => cancel(format, args),
         BroadcastAction::List(args) => list(format, args),
         BroadcastAction::Show(args) => show(format, args),

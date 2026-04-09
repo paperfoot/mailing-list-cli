@@ -415,8 +415,13 @@ pub enum BroadcastAction {
     Preview(BroadcastPreviewArgs),
     /// Move a draft broadcast into scheduled status
     Schedule(BroadcastScheduleArgs),
-    /// Send the broadcast now (runs the full pipeline)
+    /// Send the broadcast now (runs the full pipeline). Safe to re-run on
+    /// an interrupted broadcast — already-sent recipients are skipped.
     Send(BroadcastSendArgs),
+    /// Resume an interrupted broadcast send. Identical behavior to `send`
+    /// (both skip already-sent recipients), but the name makes intent
+    /// explicit when recovering from a crash or kill mid-send.
+    Resume(BroadcastSendArgs),
     /// Cancel a draft or scheduled broadcast
     Cancel(BroadcastCancelArgs),
     /// List recent broadcasts

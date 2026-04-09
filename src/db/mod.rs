@@ -1370,6 +1370,32 @@ impl Db {
         Ok(())
     }
 
+    /// Return the set of contact IDs already marked `sent` for the given
+    /// broadcast. Used by the `broadcast send` / `broadcast resume` pipeline
+    /// to skip recipients already processed in a previous interrupted run —
+    /// the v0.3 replacement for "re-render every chunk and rely on INSERT
+    /// OR IGNORE dedup" which wasted Resend API calls at scale.
+    pub fn broadcast_recipient_already_sent_ids(
+        &self,
+        broadcast_id: i64,
+    ) -> Result<std::collections::HashSet<i64>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT contact_id FROM broadcast_recipient
+                 WHERE broadcast_id = ?1 AND status = 'sent'",
+            )
+            .map_err(query_err)?;
+        let rows = stmt
+            .query_map([broadcast_id], |row| row.get::<_, i64>(0))
+            .map_err(query_err)?;
+        let mut set = std::collections::HashSet::new();
+        for row in rows {
+            set.insert(row.map_err(query_err)?);
+        }
+        Ok(set)
+    }
+
     /// Load the entire suppression list into an in-memory `HashSet<String>`
     /// keyed by lowercased email. Used by the send pipeline to replace per-
     /// recipient `is_email_suppressed` queries with O(1) lookups. Worth the
@@ -2293,6 +2319,30 @@ mod tests {
         // The HashSet-based lookup picks it up too (integrates with Task 2).
         let set = db.suppression_all_emails().unwrap();
         assert!(set.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn broadcast_recipient_already_sent_ids_returns_only_sent() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db = Db::open_at(tmp.path()).unwrap();
+        let tid = db.template_upsert("t", "s", "<p>h</p>").unwrap();
+        let lid = db.list_create("l", None, "seg_x").unwrap();
+        let bid = db.broadcast_create("b", tid, "list", lid).unwrap();
+        let c_sent = db.contact_upsert("sent@ex.com", None, None).unwrap();
+        let c_pending = db.contact_upsert("pending@ex.com", None, None).unwrap();
+        let c_bounced = db.contact_upsert("bounced@ex.com", None, None).unwrap();
+
+        db.broadcast_recipient_insert(bid, c_sent, "sent").unwrap();
+        db.broadcast_recipient_insert(bid, c_pending, "pending")
+            .unwrap();
+        db.broadcast_recipient_insert(bid, c_bounced, "bounced")
+            .unwrap();
+
+        let sent_ids = db.broadcast_recipient_already_sent_ids(bid).unwrap();
+        assert_eq!(sent_ids.len(), 1);
+        assert!(sent_ids.contains(&c_sent));
+        assert!(!sent_ids.contains(&c_pending));
+        assert!(!sent_ids.contains(&c_bounced));
     }
 
     #[test]

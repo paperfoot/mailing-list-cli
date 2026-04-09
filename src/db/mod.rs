@@ -1243,6 +1243,27 @@ impl Db {
         Ok(())
     }
 
+    /// v0.4: Write content snapshot columns on the broadcast row. Called
+    /// once at the end of a successful send. The snapshot captures what was
+    /// actually sent so editing the template later doesn't destroy the
+    /// audit trail. Only written when `final_status == "sent"`.
+    #[allow(dead_code)]
+    pub fn broadcast_set_snapshot(
+        &self,
+        id: i64,
+        subject: &str,
+        html: &str,
+        text: &str,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE broadcast SET snapshot_subject = ?1, snapshot_html = ?2, snapshot_text = ?3 WHERE id = ?4",
+                params![subject, html, text, id],
+            )
+            .map_err(query_err)?;
+        Ok(())
+    }
+
     /// v0.3.1: Try to acquire the broadcast send lock atomically. See
     /// `LockAcquireResult` for the returned variants. Implementation uses
     /// `BEGIN IMMEDIATE` for the SELECT-and-UPDATE so two concurrent

@@ -149,6 +149,13 @@ fn render_inner(
     let subject_sub = substitute(subject_source, data);
     let body_sub = substitute(&html_source, data);
 
+    // v0.4 (MON-1): inject UTM params on every outbound link in the
+    // substituted HTML. Runs AFTER substitution so {{ landing_page_url }}
+    // merge tags get UTM params on the resolved URL, not on the tag syntax.
+    // Runs BEFORE lint + html_to_text so the decorated links appear in both
+    // the HTML and the plain-text fallback.
+    let body_html = inject_utm_params(&body_sub.output, data);
+
     let mut findings = Vec::new();
 
     // Rule 1: CAN-SPAM — must contain the unsubscribe link placeholder.
@@ -176,7 +183,7 @@ fn render_inner(
     }
 
     // Rule 3: Gmail clip — post-substitution HTML size must be under 102 KB.
-    let html_size = body_sub.output.len();
+    let html_size = body_html.len();
     if html_size >= GMAIL_CLIP_LIMIT {
         findings.push(LintFinding {
             severity: Severity::Error,
@@ -243,11 +250,11 @@ fn render_inner(
         });
     }
 
-    let text = html_to_text(&body_sub.output);
+    let text = html_to_text(&body_html);
 
     Rendered {
         subject: subject_sub.output,
-        html: body_sub.output,
+        html: body_html,
         text,
         size_bytes: html_size,
         findings,
@@ -350,6 +357,128 @@ fn strip_html_comments(source: &str) -> String {
         let ch = source[i..].chars().next().unwrap();
         out.push(ch);
         i += ch.len_utf8();
+    }
+    out
+}
+
+/// v0.4 (MON-1): inject UTM query parameters on every `<a href="...">` link
+/// in the already-substituted HTML. Skips:
+///   - excluded schemes: `mailto:`, `tel:`, `sms:`, `javascript:`, `data:`
+///   - links with a `data-utm="off"` attribute on the `<a>` tag
+///   - links that are fragments only (`#section`)
+///
+/// Handles both `href="..."` (double-quote) and `href='...'` (single-quote).
+/// Correctly appends `?` vs `&` depending on whether the URL already has a
+/// query string. Preserves `#fragment` by inserting params BEFORE the hash.
+///
+/// UTM values come from the merge data if present, otherwise defaults:
+///   - `utm_source` = "mailing-list-cli"
+///   - `utm_medium` = "email"
+///   - `utm_campaign` = merge data `broadcast_name` or "broadcast"
+///
+/// The `data` parameter is the same merge data passed to `substitute`; it's
+/// used here only to extract `broadcast_name` for the campaign tag.
+fn inject_utm_params(html: &str, data: &serde_json::Value) -> String {
+    let campaign = data
+        .get("broadcast_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("broadcast");
+    let utm = format!(
+        "utm_source=mailing-list-cli&utm_medium=email&utm_campaign={}",
+        percent_encode_simple(campaign)
+    );
+
+    let mut out = String::with_capacity(html.len() + html.len() / 10);
+    let mut i = 0;
+    let lower = html.to_ascii_lowercase();
+
+    while i < html.len() {
+        // Look for `<a ` (case-insensitive).
+        if lower[i..].starts_with("<a ")
+            || lower[i..].starts_with("<a\t")
+            || lower[i..].starts_with("<a\n")
+        {
+            // Find the closing `>` of this tag.
+            let tag_end = match html[i..].find('>') {
+                Some(pos) => i + pos + 1,
+                None => {
+                    out.push_str(&html[i..]);
+                    break;
+                }
+            };
+            let tag = &html[i..tag_end];
+            let tag_lower = &lower[i..tag_end];
+
+            // Check for data-utm="off" → skip rewriting.
+            if tag_lower.contains("data-utm=\"off\"") || tag_lower.contains("data-utm='off'") {
+                out.push_str(tag);
+                i = tag_end;
+                continue;
+            }
+
+            // Extract href value.
+            if let Some(href_start) = tag_lower.find("href=") {
+                let after_eq = href_start + 5; // past "href="
+                let quote = tag.as_bytes().get(after_eq).copied();
+                if quote == Some(b'"') || quote == Some(b'\'') {
+                    let q = quote.unwrap() as char;
+                    let url_start = after_eq + 1;
+                    if let Some(url_len) = tag[url_start..].find(q) {
+                        let url = &tag[url_start..url_start + url_len];
+
+                        // Skip excluded schemes.
+                        let url_lower = url.to_ascii_lowercase();
+                        let excluded = url_lower.starts_with("mailto:")
+                            || url_lower.starts_with("tel:")
+                            || url_lower.starts_with("sms:")
+                            || url_lower.starts_with("javascript:")
+                            || url_lower.starts_with("data:")
+                            || url.starts_with('#');
+
+                        if excluded {
+                            out.push_str(tag);
+                        } else {
+                            // Insert UTM before fragment, after existing query.
+                            let (base, fragment) = match url.find('#') {
+                                Some(pos) => (&url[..pos], &url[pos..]),
+                                None => (url, ""),
+                            };
+                            let sep = if base.contains('?') { "&" } else { "?" };
+                            let new_url = format!("{base}{sep}{utm}{fragment}");
+                            out.push_str(&tag[..url_start]);
+                            out.push_str(&new_url);
+                            out.push_str(&tag[url_start + url_len..]);
+                        }
+                        i = tag_end;
+                        continue;
+                    }
+                }
+            }
+            // No href found or couldn't parse — emit tag unchanged.
+            out.push_str(tag);
+            i = tag_end;
+        } else {
+            let ch = html[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Minimal percent-encoding for UTM values: spaces → %20, & → %26, = → %3D.
+/// We only need to encode characters that would break a query string.
+fn percent_encode_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            ' ' => out.push_str("%20"),
+            '&' => out.push_str("%26"),
+            '=' => out.push_str("%3D"),
+            '#' => out.push_str("%23"),
+            '+' => out.push_str("%2B"),
+            _ => out.push(c),
+        }
     }
     out
 }
@@ -729,5 +858,100 @@ mod tests {
         assert!(text.contains("&nonexistent;"), "got: {text}");
         assert!(text.contains("&maybe;"));
         assert!(text.contains("&1invalid;"));
+    }
+
+    // ─── v0.4 MON-1: UTM link injection ─────────────────────────────────
+
+    #[test]
+    fn utm_injects_on_simple_link() {
+        let html = r#"<a href="https://example.com">Click</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            result.contains("utm_source=mailing-list-cli"),
+            "got: {result}"
+        );
+        assert!(result.contains("utm_medium=email"), "got: {result}");
+        assert!(
+            result.contains("?utm_source"),
+            "first param should use ? not &: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_appends_with_ampersand_when_query_exists() {
+        let html = r#"<a href="https://example.com?page=1">Click</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            result.contains("?page=1&utm_source"),
+            "should append with & when ? exists: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_preserves_fragment() {
+        let html = r#"<a href="https://example.com#section">Click</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            result.contains("utm_campaign=broadcast#section"),
+            "fragment should be preserved after UTM params: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_skips_mailto() {
+        let html = r#"<a href="mailto:test@example.com">Email</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            !result.contains("utm_source"),
+            "mailto links should not get UTM params: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_skips_data_utm_off() {
+        let html = r#"<a href="https://example.com" data-utm="off">Click</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            !result.contains("utm_source"),
+            "data-utm=off links should not get UTM params: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_uses_broadcast_name_as_campaign() {
+        let html = r#"<a href="https://example.com">Click</a>"#;
+        let data = serde_json::json!({"broadcast_name": "q1_launch"});
+        let result = inject_utm_params(html, &data);
+        assert!(
+            result.contains("utm_campaign=q1_launch"),
+            "campaign should use broadcast_name: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_handles_single_quoted_href() {
+        let html = r#"<a href='https://example.com'>Click</a>"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            result.contains("utm_source=mailing-list-cli"),
+            "single-quoted href should work: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_skips_fragment_only_link() {
+        let html = r##"<a href="#top">Top</a>"##;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert!(
+            !result.contains("utm_source"),
+            "fragment-only links should not get UTM params: {result}"
+        );
+    }
+
+    #[test]
+    fn utm_leaves_non_link_content_unchanged() {
+        let html = r#"<p>Hello world</p><img src="https://example.com/img.png">"#;
+        let result = inject_utm_params(html, &serde_json::json!({}));
+        assert_eq!(result, html, "non-link content should be untouched");
     }
 }

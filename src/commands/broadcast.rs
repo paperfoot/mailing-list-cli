@@ -132,6 +132,24 @@ fn schedule(format: Format, args: BroadcastScheduleArgs) -> Result<(), AppError>
 }
 
 fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
+    if args.dry_run {
+        let result = pipeline::dry_run_broadcast(args.id)?;
+        output::success(
+            format,
+            &format!(
+                "dry run: broadcast {} would send to {} recipients ({} suppressed)",
+                args.id, result.sent_count, result.suppressed_count
+            ),
+            json!({
+                "broadcast_id": result.broadcast_id,
+                "would_send": result.sent_count,
+                "suppressed": result.suppressed_count,
+                "dry_run": true
+            }),
+        );
+        return Ok(());
+    }
+
     let result = pipeline::send_broadcast(args.id, args.force_unlock)?;
     let data = json!({
         "broadcast_id": result.broadcast_id,

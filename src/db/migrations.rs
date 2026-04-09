@@ -281,4 +281,33 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         CREATE INDEX idx_send_attempt_state ON broadcast_send_attempt(broadcast_id, state);
         "#,
     ),
+    // v0.4: content snapshots (what was actually sent) + revenue tracking.
+    // Content snapshots: nullable columns on broadcast so editing a template
+    // after sending doesn't destroy the audit trail. Written once at the end
+    // of a successful send. Revenue: operator records payments attributed
+    // to broadcasts (manual entry, Stripe CSV import, or webhook relay).
+    (
+        "0006_content_snapshots_and_revenue",
+        r#"
+        ALTER TABLE broadcast ADD COLUMN snapshot_subject TEXT;
+        ALTER TABLE broadcast ADD COLUMN snapshot_html TEXT;
+        ALTER TABLE broadcast ADD COLUMN snapshot_text TEXT;
+
+        CREATE TABLE revenue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broadcast_id INTEGER REFERENCES broadcast(id) ON DELETE SET NULL,
+            contact_id INTEGER REFERENCES contact(id) ON DELETE SET NULL,
+            amount_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            source TEXT NOT NULL DEFAULT 'manual',
+            external_id TEXT,
+            paid_at TEXT,
+            recorded_at TEXT NOT NULL,
+            UNIQUE (source, external_id)
+        );
+        CREATE INDEX idx_revenue_broadcast ON revenue(broadcast_id);
+        CREATE INDEX idx_revenue_contact ON revenue(contact_id);
+        CREATE INDEX idx_revenue_paid_at ON revenue(paid_at);
+        "#,
+    ),
 ];

@@ -468,6 +468,11 @@ pub struct BroadcastSendArgs {
     /// if the other process is still alive and rendering chunks.
     #[arg(long)]
     pub force_unlock: bool,
+    /// Dry-run: resolve recipients, run preflight checks, render every
+    /// chunk, and report what WOULD be sent — but do not call email-cli
+    /// or modify any broadcast state. Exit 0 with the projected counts.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]

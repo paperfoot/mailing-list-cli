@@ -577,11 +577,107 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
     let now_rfc = chrono::Utc::now().to_rfc3339();
     db.broadcast_set_status_and_clear_lock(id, final_status, Some(&now_rfc))?;
 
+    // v0.4: snapshot the template content at send completion so editing
+    // the template later doesn't destroy the record of what was sent.
+    // Only write on successful completion (failed sends have no canonical
+    // "what was sent" because not all recipients received it). For resume
+    // sends, the snapshot reflects the template at the time of the FINAL
+    // successful run (correct — the operator may have edited the template
+    // between the crash and the resume).
+    if final_status == "sent" {
+        // Render one representative copy with placeholder data to get the
+        // subject/html/text snapshot. The per-recipient variation comes from
+        // merge data which is reconstructable from broadcast_recipient + contact.
+        let snapshot =
+            template::render_preview(&template.html_source, &template.subject, &json!({}));
+        db.broadcast_set_snapshot(id, &snapshot.subject, &snapshot.html, &snapshot.text)?;
+    }
+
     Ok(PipelineResult {
         broadcast_id: id,
         sent_count,
         suppressed_count,
         failed_count,
+    })
+}
+
+/// v0.4: dry-run mode. Resolves recipients, runs preflight checks, counts
+/// suppressed contacts, renders one sample — but does NOT call email-cli,
+/// does NOT modify broadcast state, does NOT insert broadcast_recipient rows.
+/// Returns the projected counts so operators can see what a send will do
+/// before pulling the trigger.
+#[allow(dead_code)]
+pub fn dry_run_broadcast(id: i64) -> Result<PipelineResult, AppError> {
+    let config = Config::load()?;
+    let db = Db::open()?;
+
+    let broadcast = db.broadcast_get(id)?.ok_or_else(|| AppError::BadInput {
+        code: "broadcast_not_found".into(),
+        message: format!("no broadcast with id {id}"),
+        suggestion: "Run `mailing-list-cli broadcast ls` to see existing broadcasts".into(),
+    })?;
+    let template = db
+        .template_all()?
+        .into_iter()
+        .find(|t| t.id == broadcast.template_id)
+        .ok_or_else(|| AppError::BadInput {
+            code: "template_not_found".into(),
+            message: format!("template id {} not found", broadcast.template_id),
+            suggestion: "Re-create the broadcast with a valid template".into(),
+        })?;
+
+    let recipients = resolve_target(&db, &broadcast)?;
+
+    // Run preflight checks (this validates sender, physical address, rates, template lint).
+    preflight_checks(
+        &db,
+        &config,
+        &template.html_source,
+        &template.subject,
+        recipients.len(),
+    )?;
+
+    // Count suppressed.
+    let suppressed_set = db.suppression_all_emails()?;
+    let mut would_send = 0;
+    let mut suppressed_count = 0;
+    for r in &recipients {
+        if suppressed_set.contains(&r.email.to_ascii_lowercase()) {
+            suppressed_count += 1;
+        } else {
+            would_send += 1;
+        }
+    }
+
+    // Render one sample to validate the template works with real-ish data.
+    if let Some(first) = recipients.first() {
+        let merge_data = json!({
+            "first_name": first.first_name.as_deref().unwrap_or(""),
+            "last_name": first.last_name.as_deref().unwrap_or(""),
+            "email": &first.email,
+        });
+        template::render(&template.html_source, &template.subject, &merge_data).map_err(|e| {
+            AppError::BadInput {
+                code: "template_render_failed".into(),
+                message: format!("dry run failed during sample render: {e}"),
+                suggestion: format!(
+                    "Fix the template with `mailing-list-cli template preview {} --open`",
+                    template.name
+                ),
+            }
+        })?;
+    }
+
+    eprintln!(
+        "dry run: broadcast {id} would send to {would_send} recipients ({suppressed_count} suppressed, {} total in target)",
+        recipients.len()
+    );
+
+    Ok(PipelineResult {
+        broadcast_id: id,
+        sent_count: would_send,
+        suppressed_count,
+        failed_count: 0,
     })
 }
 

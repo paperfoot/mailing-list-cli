@@ -331,10 +331,14 @@ impl EmailCli {
                 message: format!("invalid JSON from email-cli domain list: {e}"),
                 suggestion: "Check email-cli version compatibility".into(),
             })?;
-        // Shape: {"data": [ {name, region, status, capabilities}, ... ] }
+        // Real shape: {"data": {"data": [ {name, region, status, ...}, ... ] }}
+        // Legacy/stub shape: {"data": [ {name, ...}, ... ]}
+        // We support both — try data.data first, fall back to data.
         let arr = parsed
             .get("data")
+            .and_then(|d| d.get("data"))
             .and_then(|d| d.as_array())
+            .or_else(|| parsed.get("data").and_then(|d| d.as_array()))
             .cloned()
             .unwrap_or_default();
         Ok(arr)

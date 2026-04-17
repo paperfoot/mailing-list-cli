@@ -22,7 +22,7 @@
 - Tests: 126 unit + 63 integration = **189 passing** (was 177 at start of session)
 - Release binary: `target/release/mailing-list-cli` reports `0.3.1`
 - Working tree clean
-- Pushed: main + v0.3.1 tag pushed to `199-biotechnologies/mailing-list-cli`
+- Pushed: main + v0.3.1 tag pushed to `paperfoot/mailing-list-cli`
 - crates.io: `https://crates.io/crates/mailing-list-cli` — **published v0.3.1** (first version on crates.io)
 - Homebrew: `Formula/mailing-list-cli.rb` added to `199-biotechnologies/homebrew-tap` (commit `10824bd` in that repo)
 - Smoke test DB preserved at `/tmp/mlc-smoke-v0.3.1/state.db`
@@ -95,7 +95,7 @@ brew install mailing-list-cli
 
 For future releases, the formula update flow is:
 1. Tag and push the new version
-2. Compute SHA256: `curl -sL https://github.com/199-biotechnologies/mailing-list-cli/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256`
+2. Compute SHA256: `curl -sL https://github.com/paperfoot/mailing-list-cli/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256`
 3. Update `url` and `sha256` in `Formula/mailing-list-cli.rb`
 4. Commit and push to homebrew-tap
 

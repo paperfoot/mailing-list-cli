@@ -164,7 +164,7 @@ All committed in `2c61152 fix(email_cli): real Resend response shapes for send +
 - **Uncommitted changes:** none (working tree clean)
 - **Tests passing:** yes — `cargo test -- --test-threads=1` reports **105 unit + 52 integration = 157 passing**
 - **Build status:** clean (`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` all clean)
-- **CI status:** v0.1.1 CI was triggered earlier (`gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1`); check that it went green
+- **CI status:** v0.1.1 CI was triggered earlier (`gh run list --repo paperfoot/mailing-list-cli --limit 1`); check that it went green
 - **Pushed to remote:** yes, all commits and tags pushed
 
 ---
@@ -178,7 +178,7 @@ cd /Users/biobook/Projects/mailing-list-cli
 git log --oneline -10
 git status
 cargo test -- --test-threads=1 2>&1 | grep "test result"
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 3
+gh run list --repo paperfoot/mailing-list-cli --limit 3
 ```
 
 You should see 157 tests green and the v0.1.1 CI run as completed.
@@ -254,7 +254,7 @@ git commit -m "chore: bump to v0.1.2 — phase 6 webhooks + reports"
 git push origin main
 git tag -a v0.1.2 -m "v0.1.2 — webhook ingestion + reports; ships bounce/click/unsubscribe stats"
 git push origin v0.1.2
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1
+gh run list --repo paperfoot/mailing-list-cli --limit 1
 ```
 
 ### Step 6 (post-tag): Real-Resend smoke test for v0.1.2

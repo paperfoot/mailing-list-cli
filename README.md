@@ -8,7 +8,7 @@
 
 <br />
 
-[![Star this repo](https://img.shields.io/github/stars/199-biotechnologies/mailing-list-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/199-biotechnologies/mailing-list-cli/stargazers)
+[![Star this repo](https://img.shields.io/github/stars/paperfoot/mailing-list-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/mailing-list-cli/stargazers)
 &nbsp;&nbsp;
 [![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
 
@@ -51,7 +51,7 @@ The existing options for an agent are bad:
 >
 > The `email-cli` team shipped all three of our architectural asks within a day of the [gap analysis](./docs/email-cli-gap-analysis.md) being committed: `contact create --properties <json>`, `email list --after <id>`, and the `broadcast` noun. They also retired the deprecated `audience` noun. `mailing-list-cli` v0.0.3 migrated to the new surface: lists now back onto Resend segments instead of audiences, contacts live in the flat `/contacts` namespace, and the gap analysis is marked **FULFILLED**.
 >
-> Lists, contacts, and tags work end-to-end against real `email-cli` v0.6.2+. 30 tests pass, clippy clean, CI green. Templates, segments, broadcasts, suppression, opt-in, A/B testing, and analytics land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues/1).
+> Lists, contacts, and tags work end-to-end against real `email-cli` v0.6.2+. 30 tests pass, clippy clean, CI green. Templates, segments, broadcasts, suppression, opt-in, A/B testing, and analytics land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues/1).
 >
 > Read [the research](./research), the [design spec](./docs/specs/2026-04-07-mailing-list-cli-design.md), or the [Phase 1 plan](./docs/plans/2026-04-07-phase-1-foundations.md) to see what we're building toward. Star the repo to follow along.
 
@@ -216,7 +216,7 @@ Built by [Boris Djordjevic](https://github.com/longevityboris) at [Paperfoot AI]
 
 **If this is useful or interesting:**
 
-[![Star this repo](https://img.shields.io/github/stars/199-biotechnologies/mailing-list-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/199-biotechnologies/mailing-list-cli/stargazers)
+[![Star this repo](https://img.shields.io/github/stars/paperfoot/mailing-list-cli?style=for-the-badge&logo=github&label=%E2%AD%90%20Star%20this%20repo&color=yellow)](https://github.com/paperfoot/mailing-list-cli/stargazers)
 &nbsp;&nbsp;
 [![Follow @longevityboris](https://img.shields.io/badge/Follow_%40longevityboris-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/longevityboris)
 

@@ -22,7 +22,7 @@ Two releases shipped this session:
 - Tests: 115 unit + 62 integration = **177 passing** (was 165 at start of session)
 - Release binary: `target/release/mailing-list-cli` reports `0.3.0`
 - Working tree clean
-- Pushed: main + all tags pushed to `199-biotechnologies/mailing-list-cli`
+- Pushed: main + all tags pushed to `paperfoot/mailing-list-cli`
 
 ---
 
@@ -136,7 +136,7 @@ Smoke DB preserved at `/tmp/mlc-smoke-v0.3.0/state.db`.
 - **Tests passing:** 115 unit + 62 integration = **177 passing** in ~11s parallel + 4s integration
 - **Build status:** clean (`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` all clean)
 - **Release binary:** `target/release/mailing-list-cli 0.3.0` (3.5 MB LTO+strip)
-- **Pushed:** main + v0.3.0 tag pushed to `199-biotechnologies/mailing-list-cli`
+- **Pushed:** main + v0.3.0 tag pushed to `paperfoot/mailing-list-cli`
 - **Smoke test DB:** `/tmp/mlc-smoke-v0.3.0/` preserved
 
 ---

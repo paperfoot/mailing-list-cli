@@ -1989,7 +1989,7 @@ git commit -m "chore: bump to v0.1.2 — phase 6 webhooks + reports"
 git push origin main
 git tag -a v0.1.2 -m "v0.1.2 — webhook ingestion + reports; ships bounce/click/unsubscribe stats"
 git push origin v0.1.2
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1
+gh run list --repo paperfoot/mailing-list-cli --limit 1
 ```
 
 ---

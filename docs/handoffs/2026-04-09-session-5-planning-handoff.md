@@ -24,7 +24,7 @@ The v0.4 scope below is deliberately built around what's actionable WITHOUT touc
 ## Active Plan
 
 **v0.3 plan (already executed, frozen):** [`docs/plans/2026-04-09-phase-8-v0.3-production-grade-10k.md`](../plans/2026-04-09-phase-8-v0.3-production-grade-10k.md)
-- Status: **fully executed** in session 4. All 7 tasks + release task shipped as commits `2a07374` → `f30fd42`. Tag `v0.3.0` pushed to `199-biotechnologies/mailing-list-cli`.
+- Status: **fully executed** in session 4. All 7 tasks + release task shipped as commits `2a07374` → `f30fd42`. Tag `v0.3.0` pushed to `paperfoot/mailing-list-cli`.
 
 **v0.4 plan (NOT YET WRITTEN — first action for next session):**
 - Filename: `docs/plans/2026-04-09-phase-9-v0.4-operator-superpowers.md`
@@ -166,7 +166,7 @@ The v0.4 scope below is deliberately built around what's actionable WITHOUT touc
 - **Tests passing:** 115 unit + 62 integration = **177 passing** (snapshot of v0.3.0 state)
 - **Build status:** clean (verified at v0.3.0 release)
 - **CI status:** v0.3.0 commit was running at end of session 4; presumed green (no notification of failure during session 5 research)
-- **Pushed:** main + v0.3.0 + v0.2.3 + v0.2.2 + v0.2.1 + v0.2.0 + v0.1.x tags pushed to `199-biotechnologies/mailing-list-cli`
+- **Pushed:** main + v0.3.0 + v0.2.3 + v0.2.2 + v0.2.1 + v0.2.0 + v0.1.x tags pushed to `paperfoot/mailing-list-cli`
 - **Smoke test DB:** `/tmp/mlc-smoke-v0.3.0/` preserved
 
 ---

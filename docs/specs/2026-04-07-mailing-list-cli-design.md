@@ -1118,7 +1118,7 @@ In particular, `mailing-list-cli` does NOT use:
 
 ## 15. Roadmap to v0.1
 
-The phases below match the pinned [roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues/1).
+The phases below match the pinned [roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues/1).
 
 | Phase | Tag | Scope |
 |---|---|---|

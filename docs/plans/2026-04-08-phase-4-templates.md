@@ -2315,7 +2315,7 @@ git commit -m "chore: bump to v0.1.0 — phase 4 templates"
 git push origin main
 git tag -a v0.1.0 -m "v0.1.0 — templates, MJML compile pipeline, lint, agent authoring guide"
 git push origin v0.1.0
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1
+gh run list --repo paperfoot/mailing-list-cli --limit 1
 ```
 
 ---

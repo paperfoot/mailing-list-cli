@@ -144,7 +144,7 @@ v0.2.2 tag push → CI **green** (`24160755176`).
 - **Build status:** clean (`cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` all clean)
 - **CI status:** **green** on v0.2.2 commit (run `24160755176`, 2m13s)
 - **Release binary:** `target/release/mailing-list-cli` (3.5 MB LTO+strip)
-- **Pushed:** main + all tags pushed to `199-biotechnologies/mailing-list-cli`
+- **Pushed:** main + all tags pushed to `paperfoot/mailing-list-cli`
 - **Smoke test DB:** `/tmp/mlc-smoke-v0.2.0/` preserved — config.toml, welcome.html, typo.html, state.db, cache/, preview/
 
 ---

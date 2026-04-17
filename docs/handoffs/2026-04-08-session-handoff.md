@@ -24,7 +24,7 @@ This plan maps the remaining work from `v0.0.3` → `v0.1.5` across 7 phases. Ea
 ## What Was Accomplished This Session
 
 **GitHub repo creation + polish (2026-04-07):**
-- Created `199-biotechnologies/mailing-list-cli` as a public repo
+- Created `paperfoot/mailing-list-cli` as a public repo
 - Full README with hero card (`assets/og-card.png` — 1536×1024 dev-tool aesthetic, generated via `chatgpt-image` skill)
 - `LICENSE` (MIT), `AGENTS.md`, `CONTRIBUTING.md`
 - 20 SEO topics configured, Discussions enabled, pinned roadmap issue #1
@@ -182,7 +182,7 @@ Then build in this order: `tag` commands → `field` commands → `contact tag/u
 - **Every email-cli command mailing-list-cli calls needs a test assertion against the stub's canned response** — if the stub returns `{"id":"seg_test_12345"}` but you expect `{"data":{"id":"..."}}`, the test will silently pass while real email-cli fails. When in doubt, inspect the real email-cli output format first.
 - **The `v0.0.1 Foundations` release badge in README has NOT been updated to `v0.0.3`** as of commit `b2d8206` — I updated the status section text but the badge URL still says v0.0.1 Foundations in the Phase 3 plan. Check and update if needed.
   - **Correction:** verified, the badge *was* updated to `v0.0.3_email--cli_v0.6` in the v0.0.3 commit. This warning is obsolete — included here only because I mentioned the badge mid-session and want the next session to sanity check.
-- **CI on the v0.0.3 commit was "in_progress" when this handoff was written.** Double-check it went green with `gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1` before starting Phase 3 work.
+- **CI on the v0.0.3 commit was "in_progress" when this handoff was written.** Double-check it went green with `gh run list --repo paperfoot/mailing-list-cli --limit 1` before starting Phase 3 work.
 - **The `chatgpt-image` skill and `github-optimization` skill are already active in this session and should still be available.** No need to re-activate.
 
 ---

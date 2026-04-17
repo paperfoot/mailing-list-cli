@@ -23,7 +23,7 @@
 - **Codebase:** ~15K lines of Rust (12.5K src + 2.5K tests)
 - **Runtime deps:** 14 (unchanged since v0.2.0 — 9 releases on the same budget)
 - **Working tree:** clean
-- **Pushed:** main + v0.4.0 tag to `199-biotechnologies/mailing-list-cli`
+- **Pushed:** main + v0.4.0 tag to `paperfoot/mailing-list-cli`
 - **crates.io:** v0.4.0 published
 - **Homebrew:** formula updated to v0.4.0
 

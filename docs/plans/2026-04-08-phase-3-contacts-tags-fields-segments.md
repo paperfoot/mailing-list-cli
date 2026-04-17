@@ -5290,7 +5290,7 @@ git push origin v0.0.4
 - [ ] **Step 7: Verify CI went green**
 
 ```bash
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1
+gh run list --repo paperfoot/mailing-list-cli --limit 1
 ```
 
 If the latest run status is `in_progress`, wait and re-check. If `completed, success`, you're done.

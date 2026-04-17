@@ -1881,7 +1881,7 @@ git commit -m "chore: bump to v0.1.1 — phase 5 broadcasts"
 git push origin main
 git tag -a v0.1.1 -m "v0.1.1 — broadcasts, send pipeline, HMAC unsubscribe tokens"
 git push origin v0.1.1
-gh run list --repo 199-biotechnologies/mailing-list-cli --limit 1
+gh run list --repo paperfoot/mailing-list-cli --limit 1
 ```
 
 ---
@@ -1959,7 +1959,7 @@ variables:
       <mj-column>
         <mj-text font-size="20px">Hi {{ first_name }},</mj-text>
         <mj-text>This is an automated smoke test from mailing-list-cli v0.1.1.</mj-text>
-        <mj-button href="https://github.com/199-biotechnologies/mailing-list-cli">View the repo</mj-button>
+        <mj-button href="https://github.com/paperfoot/mailing-list-cli">View the repo</mj-button>
         <mj-text font-size="11px" color="#666">
           {{{ unsubscribe_link }}}<br/>
           {{{ physical_address_footer }}}

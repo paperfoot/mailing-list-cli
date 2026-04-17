@@ -5,8 +5,8 @@
 ## Right now
 
 1. **Read [the research](./research/README.md)** — five dossiers covering modern newsletter platforms, marketing tools, Resend's API surface, deliverability and compliance at scale, and email template formats for AI agents.
-2. **Open a [Discussion](https://github.com/199-biotechnologies/mailing-list-cli/discussions)** if you spot something missing, want a feature on the roadmap, or disagree with a direction call.
-3. **Comment on the [pinned roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues)** if you want a specific command added or reshaped.
+2. **Open a [Discussion](https://github.com/paperfoot/mailing-list-cli/discussions)** if you spot something missing, want a feature on the roadmap, or disagree with a direction call.
+3. **Comment on the [pinned roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues)** if you want a specific command added or reshaped.
 
 ## Once the binary ships
 

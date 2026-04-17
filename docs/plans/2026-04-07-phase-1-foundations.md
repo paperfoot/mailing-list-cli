@@ -68,8 +68,8 @@ edition = "2024"
 rust-version = "1.85"
 description = "Newsletter and mailing list management from the terminal. Built for AI agents on top of email-cli."
 license = "MIT"
-repository = "https://github.com/199-biotechnologies/mailing-list-cli"
-homepage = "https://github.com/199-biotechnologies/mailing-list-cli"
+repository = "https://github.com/paperfoot/mailing-list-cli"
+homepage = "https://github.com/paperfoot/mailing-list-cli"
 keywords = ["mailing-list", "newsletter", "cli", "resend", "agent"]
 categories = ["command-line-utilities", "email"]
 
@@ -1837,7 +1837,7 @@ Replace with:
 ```markdown
 > **v0.0.1 — Foundations shipped. No mailing-list features yet.**
 >
-> The binary builds, the database migrates, the JSON envelope works, `agent-info` is wired, and `health` checks every dependency including `email-cli`. Mailing-list features (lists, contacts, templates, broadcasts) land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/199-biotechnologies/mailing-list-cli/issues/1).
+> The binary builds, the database migrates, the JSON envelope works, `agent-info` is wired, and `health` checks every dependency including `email-cli`. Mailing-list features (lists, contacts, templates, broadcasts) land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues/1).
 ```
 
 - [ ] **Step 3: Commit, tag, and push**

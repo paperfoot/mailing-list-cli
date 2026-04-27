@@ -137,26 +137,26 @@ jobs:
           cd tap
           mkdir -p Formula
           cat > Formula/mailing-list-cli.rb <<RUBY
-class MailingListCli < Formula
-  desc "Newsletter and mailing list management from the terminal. Built for AI agents on top of email-cli"
-  homepage "https://github.com/paperfoot/mailing-list-cli"
-  url "${TARBALL_URL}"
-  sha256 "${SHA256}"
-  license "MIT"
-  head "https://github.com/paperfoot/mailing-list-cli.git", branch: "main"
+          class MailingListCli < Formula
+            desc "Newsletter and mailing list management from the terminal. Built for AI agents on top of email-cli"
+            homepage "https://github.com/paperfoot/mailing-list-cli"
+            url "${TARBALL_URL}"
+            sha256 "${SHA256}"
+            license "MIT"
+            head "https://github.com/paperfoot/mailing-list-cli.git", branch: "main"
 
-  depends_on "rust" => :build
+            depends_on "rust" => :build
 
-  def install
-    system "cargo", "install", *std_cargo_args
-  end
+            def install
+              system "cargo", "install", *std_cargo_args
+            end
 
-  test do
-    assert_match "mailing-list-cli", shell_output("#{bin}/mailing-list-cli --version")
-    assert_match "agent-info", shell_output("#{bin}/mailing-list-cli --help")
-  end
-end
-RUBY
+            test do
+              assert_match "mailing-list-cli", shell_output("#{bin}/mailing-list-cli --version")
+              assert_match "agent-info", shell_output("#{bin}/mailing-list-cli --help")
+            end
+          end
+          RUBY
 
           if git diff --quiet -- Formula/mailing-list-cli.rb; then
             echo "Homebrew formula already current."
@@ -184,16 +184,16 @@ RUBY
           TAG: ${{ needs.verify.outputs.tag }}
         run: |
           NOTES="$(cat <<'NOTES'
-Automated release for mailing-list-cli.
+          Automated release for mailing-list-cli.
 
-Install or update:
+          Install or update:
 
-```bash
-cargo install mailing-list-cli --force
-brew update && brew upgrade mailing-list-cli
-```
-NOTES
-)"
+          ```bash
+          cargo install mailing-list-cli --force
+          brew update && brew upgrade mailing-list-cli
+          ```
+          NOTES
+          )"
 
           if gh release view "$TAG" --repo paperfoot/mailing-list-cli >/dev/null 2>&1; then
             gh release edit "$TAG" --repo paperfoot/mailing-list-cli --title "$TAG" --notes "$NOTES"

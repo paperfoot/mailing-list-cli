@@ -231,7 +231,7 @@ fn render(format: Format, args: TemplateRenderArgs) -> Result<(), AppError> {
     if !args.raw {
         if let Value::Object(map) = &mut data {
             map.entry(String::from("unsubscribe_link")).or_insert(json!(
-                "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\">Unsubscribe</a>"
+                "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>"
             ));
             map.entry(String::from("physical_address_footer")).or_insert(json!(
                 "<span style=\"color:#666;font-size:11px\">Your Company Name · 123 Example Street · City, ST 00000</span>"
@@ -275,7 +275,7 @@ fn preview(format: Format, args: TemplatePreviewArgs) -> Result<(), AppError> {
     // preview renders a full, visually accurate output.
     if let Value::Object(map) = &mut data {
         map.entry(String::from("unsubscribe_link")).or_insert(json!(
-            "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\">Unsubscribe</a>"
+            "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>"
         ));
         // Inline <span> stub so it's safe to inject inside a `<p>` or any other
         // inline context in the template — matches the broadcast pipeline's

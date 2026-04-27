@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.4.1 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.1_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.4.2 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.2_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -47,13 +47,22 @@ The existing options for an agent are bad:
 
 ## Status
 
-> **v0.0.3 — migrated to `email-cli` v0.6 (audiences → segments).**
+> **v0.4.2 — deliverability footer/text patch on the production send path.**
 >
-> The `email-cli` team shipped all three of our architectural asks within a day of the [gap analysis](./docs/email-cli-gap-analysis.md) being committed: `contact create --properties <json>`, `email list --after <id>`, and the `broadcast` noun. They also retired the deprecated `audience` noun. `mailing-list-cli` v0.0.3 migrated to the new surface: lists now back onto Resend segments instead of audiences, contacts live in the flat `/contacts` namespace, and the gap analysis is marked **FULFILLED**.
+> `broadcast send` now requires explicit `--confirm`, sends in resumable chunks
+> of 100 through `email-cli batch send`, emits RFC 8058 one-click unsubscribe
+> headers, keeps body unsubscribe links out of UTM rewriting, and preserves CTA
+> and unsubscribe destinations in the plain-text MIME alternative as
+> `Label (URL)`.
 >
-> Lists, contacts, and tags work end-to-end against real `email-cli` v0.6.2+. 30 tests pass, clippy clean, CI green. Templates, segments, broadcasts, suppression, opt-in, A/B testing, and analytics land in subsequent v0.0.x and v0.1.x releases per the [pinned roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues/1).
+> Tracking is integrated via `event poll`, which asks `email-cli email list`
+> for recent Resend state and mirrors delivery/click/bounce events into local
+> SQLite for `report show`, `report links`, `report engagement`, and
+> `report deliverability`.
 >
-> Read [the research](./research), the [design spec](./docs/specs/2026-04-07-mailing-list-cli-design.md), or the [Phase 1 plan](./docs/plans/2026-04-07-phase-1-foundations.md) to see what we're building toward. Star the repo to follow along.
+> Release automation is live: pushing a `vX.Y.Z` tag runs verification,
+> publishes crates.io, updates the Homebrew tap, and creates the GitHub release.
+> See [docs/release.md](./docs/release.md).
 
 ## Planned Commands
 
@@ -95,6 +104,8 @@ Filter expressions are a JSON AST (v0.2 dropped the string DSL — agents emit J
 Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals. Triple-brace `{{{ name }}}` is an allowlisted XSS-safe escape hatch, reserved for `unsubscribe_link` and `physical_address_footer` only. The send pipeline hard-fails on any unresolved placeholder before a single email goes out.
 
 `template render` is for machine inspection and always prints the full CLI JSON envelope. Do not pass its whole stdout to `email-cli --html`; use `template preview` for rendered files, `broadcast preview` for test emails, or extract `jq -r '.data.html'` after checking `lint_errors == 0`.
+
+Rendered plain-text alternatives preserve links as `Label (URL)`. Generated unsubscribe anchors include `data-utm="off"` so the compliance link in the body is not rewritten with tracking parameters, while normal CTA links still receive campaign UTM tags.
 
 ### Broadcasts (Campaigns)
 

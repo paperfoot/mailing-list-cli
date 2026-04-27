@@ -7,7 +7,7 @@ them without an MCP server, schema file, or browser dashboard.
 
 ## Current state
 
-- **Version**: v0.4.1 (send-confirmation safety patch + release automation on top of v0.4.0)
+- **Version**: v0.4.2 (deliverability footer/text patch on top of v0.4.1)
 - **Research**: see [/research](./research) for the five dossiers that informed the original design
 - **Recent plans**:
   - [v0.2 rearchitecture](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md) (shipped as v0.2.0)
@@ -15,6 +15,7 @@ them without an MCP server, schema file, or browser dashboard.
   - [v0.3.1 emergency hardening](./docs/plans/2026-04-09-phase-9-v0.3.1-emergency-hardening.md) (shipped as v0.3.1)
   - [v0.4 operator superpowers](./docs/plans/2026-04-09-v0.4-operator-superpowers.md) (shipped as v0.4.0)
   - v0.4.1 patch: explicit broadcast approval, safer template-render guidance, click payload passthrough, release automation
+  - v0.4.2 patch: unsubscribe body links opt out of UTM rewriting, plain-text alternatives preserve anchor URLs
 
 ## Production hardening (v0.3.x)
 
@@ -31,6 +32,7 @@ What "production-grade" means in this codebase:
 - **Honest limitations**: the 30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading only `last_event` per row. The guards still fire and remain useful safety nets, but the exact percentages are best-effort approximations — see `agent-info → known_limitations` and the docstring on `historical_send_rates`. Proper fix is v0.5+ pending an upstream change to email-cli or a rolling-window snapshot diff. Source: GPT Pro F3.2 from 2026-04-09 hardening review.
 - **Click reporting limitation**: `report show` can count clicked emails from `last_event=clicked`. `report links` needs link payload from `email-cli` (`click.link` or `link`); the poll path stores it when present, but cannot infer the CTA URL from `last_event` alone.
 - **Tracking workflow**: run `webhook poll` / `event poll` after sends. The CLI shells out to `email-cli email list`, maps `last_event` into local `event` rows, stores `click` rows when link payload exists, then reports from SQLite via `report show` / `report links`.
+- **Deliverability footer behavior**: the send pipeline emits `List-Unsubscribe` and `List-Unsubscribe-Post` headers, and the body unsubscribe anchor is rendered with `data-utm="off"` so tracking parameters are not added to compliance links. The plain-text MIME alternative preserves anchor destinations as `Label (URL)` instead of dropping URLs.
 
 ## Conventions
 

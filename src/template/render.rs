@@ -292,8 +292,10 @@ fn html_to_text(html: &str) -> String {
         i += html[i..].chars().next().unwrap().len_utf8();
     }
 
+    let with_anchor_urls = preserve_anchor_hrefs_for_text(&cleaned);
+
     // Replace block-level tags with line breaks BEFORE stripping all tags.
-    let with_breaks = cleaned
+    let with_breaks = with_anchor_urls
         .replace("<br>", "\n")
         .replace("<br/>", "\n")
         .replace("<br />", "\n")
@@ -332,6 +334,92 @@ fn html_to_text(html: &str) -> String {
 
     // Collapse consecutive whitespace while preserving double-newlines.
     collapse_whitespace(&unescaped)
+}
+
+/// Expand anchors before generic tag stripping so the plain-text MIME part
+/// keeps destinations visible: `<a href="https://x">Read</a>` becomes
+/// `Read (https://x)`.
+fn preserve_anchor_hrefs_for_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let lower = html.to_ascii_lowercase();
+    let mut i = 0;
+
+    while i < html.len() {
+        if lower[i..].starts_with("<a ")
+            || lower[i..].starts_with("<a\t")
+            || lower[i..].starts_with("<a\n")
+        {
+            let tag_end = match html[i..].find('>') {
+                Some(pos) => i + pos + 1,
+                None => {
+                    out.push_str(&html[i..]);
+                    break;
+                }
+            };
+            let tag = &html[i..tag_end];
+            let tag_lower = &lower[i..tag_end];
+            let href = href_from_anchor_tag(tag, tag_lower);
+
+            if let Some(href) = href {
+                if let Some(close_rel) = lower[tag_end..].find("</a>") {
+                    let close_start = tag_end + close_rel;
+                    let close_end = close_start + "</a>".len();
+                    let label = strip_inline_tags_to_text(&html[tag_end..close_start]);
+                    let href = collapse_whitespace(&unescape_entities(href));
+
+                    if href.is_empty() {
+                        out.push_str(&label);
+                    } else if label.is_empty() || label == href {
+                        out.push_str(&href);
+                    } else {
+                        out.push_str(&label);
+                        out.push_str(" (");
+                        out.push_str(&href);
+                        out.push(')');
+                    }
+
+                    i = close_end;
+                    continue;
+                }
+            }
+
+            out.push_str(tag);
+            i = tag_end;
+        } else {
+            let ch = html[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+
+    out
+}
+
+fn href_from_anchor_tag<'a>(tag: &'a str, tag_lower: &str) -> Option<&'a str> {
+    let href_start = tag_lower.find("href=")?;
+    let after_eq = href_start + "href=".len();
+    let quote = tag.as_bytes().get(after_eq).copied()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let q = quote as char;
+    let url_start = after_eq + 1;
+    let url_len = tag[url_start..].find(q)?;
+    Some(&tag[url_start..url_start + url_len])
+}
+
+fn strip_inline_tags_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    collapse_whitespace(&unescape_entities(&out))
 }
 
 /// Strip HTML comments (`<!-- ... -->`) from the source. Comments nest
@@ -627,7 +715,7 @@ pub fn lint(html_source: &str, subject_source: &str) -> Rendered {
         "email": "preview@example.invalid",
         "current_year": 2026,
         "broadcast_id": 0,
-        "unsubscribe_link": "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN_aaaaaaaaaaaaaaaaaaaaaaaaaa\" target=\"_blank\">Unsubscribe</a>",
+        "unsubscribe_link": "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN_aaaaaaaaaaaaaaaaaaaaaaaaaa\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>",
         "physical_address_footer": "<span style=\"color:#666;font-size:11px\">Your Company Name · 123 Example Street · Suite 400 · City, ST 00000 · United States</span>"
     });
     let mut r = render_preview(html_source, subject_source, &stub);
@@ -756,6 +844,33 @@ mod tests {
         assert!(!text.contains("color:red"));
         assert!(!text.contains("evil()"));
         assert!(!text.contains("<"));
+    }
+
+    #[test]
+    fn plain_text_preserves_anchor_destinations() {
+        let html = r#"<p><a href="https://paperfoot.com/story?utm_source=test&amp;utm_medium=email">Visit Paperfoot</a></p><p><a href="https://paperfoot.com/unsubscribe/tok" data-utm="off">Unsubscribe</a></p>"#;
+        let text = html_to_text(html);
+        assert!(
+            text.contains(
+                "Visit Paperfoot (https://paperfoot.com/story?utm_source=test&utm_medium=email)"
+            ),
+            "got: {text}"
+        );
+        assert!(
+            text.contains("Unsubscribe (https://paperfoot.com/unsubscribe/tok)"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("<a"),
+            "plain text must not leak tags: {text}"
+        );
+    }
+
+    #[test]
+    fn plain_text_avoids_duplicate_url_labels() {
+        let html = r#"<a href="https://paperfoot.com">https://paperfoot.com</a>"#;
+        let text = html_to_text(html);
+        assert_eq!(text, "https://paperfoot.com");
     }
 
     #[test]
@@ -935,6 +1050,37 @@ mod tests {
         assert!(
             !result.contains("utm_source"),
             "data-utm=off links should not get UTM params: {result}"
+        );
+    }
+
+    #[test]
+    fn rendered_unsubscribe_link_skips_utm_and_text_keeps_url() {
+        let source = r#"<p>{{{ unsubscribe_link }}}</p><p><a href="https://paperfoot.com">Visit</a></p><p>{{{ physical_address_footer }}}</p>"#;
+        let r = render(
+            source,
+            "Subject",
+            &serde_json::json!({
+                "unsubscribe_link": "<a href=\"https://paperfoot.com/unsubscribe/tok\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>",
+                "physical_address_footer": "<span>32 Pekin Street</span>",
+                "broadcast_name": "deliverability patch"
+            }),
+        )
+        .unwrap();
+        assert!(
+            r.html.contains("https://paperfoot.com/unsubscribe/tok\""),
+            "unsubscribe URL must not get UTM params: {}",
+            r.html
+        );
+        assert!(
+            r.html.contains("https://paperfoot.com?utm_source="),
+            "CTA link should still get UTM params: {}",
+            r.html
+        );
+        assert!(
+            r.text
+                .contains("Unsubscribe (https://paperfoot.com/unsubscribe/tok)"),
+            "plain text should expose unsubscribe URL: {}",
+            r.text
         );
     }
 

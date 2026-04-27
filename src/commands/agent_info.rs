@@ -98,12 +98,18 @@ pub fn run() {
             ],
             "limitation": "last_event is a latest-state snapshot per email. It is enough for aggregate clicked/opened/bounced counts, but per-link CTA reporting needs click.link or link payload from email-cli."
         },
+        "deliverability": {
+            "headers": "broadcast send includes List-Unsubscribe and List-Unsubscribe-Post headers on every recipient payload",
+            "body_unsubscribe": "generated unsubscribe body anchors include data-utm=\"off\" so UTM rewriting does not decorate compliance links",
+            "plain_text": "the plain-text MIME alternative preserves anchor destinations as `Label (URL)` so CTA and unsubscribe URLs remain visible outside HTML clients",
+            "operator_note": "Inbox placement still depends on DNS alignment, domain reputation, recipient engagement, content, and the provider's spam model. `mailing-list-cli health` verifies the Resend sender domain, but DMARC/SPF policy tuning and reputation monitoring are outside the local SQLite state."
+        },
         "known_limitations": [
             "email-cli profile selection is database-implicit. The `[email_cli].profile` config field is used ONLY by the health-check `profile test` call. email-cli 0.6.3 has no global `--profile <name>` flag, so other commands cannot select a profile per-invocation. Multi-profile setups are ambiguous — `mailing-list-cli health` will warn if more than one email-cli profile is configured. Track the upstream issue at paperfoot/email-cli.",
             "30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading `last_event` per row. This means later state changes on already-seen emails are invisible, and only the most recent event per email is recorded. Treat the rates as approximate. The guards still fire (and are still useful safety nets), but operators should not over-trust the exact percentages. Source: GPT Pro F3.2 from 2026-04-09 hardening review. See docs/email-cli-gap-analysis.md.",
             "`report show` can count clicked emails from `last_event=clicked`; `report links` needs click link payload (`click.link` or `link`) from email-cli. The poll path stores it when present, but if upstream only exposes last_event then per-link CTA rows remain empty while clicked_count still increments."
         ],
-        "status": "v0.4.1 — safety/release patch: explicit broadcast send/resume --confirm approval, safer template-render guidance so agents use .data.html instead of the JSON envelope, click payload passthrough for report links when email-cli exposes it, tracking flow documented in agent-info, and tag-driven crates.io/Homebrew/GitHub release automation. Built on v0.4.0 operator superpowers and v0.3.x hardening foundations."
+        "status": "v0.4.2 — deliverability patch: generated unsubscribe body links opt out of UTM rewriting, template render/preview stubs match send behavior, and plain-text MIME alternatives preserve CTA/unsubscribe URLs as Label (URL). Built on v0.4.1 explicit-send approval, tracking docs, and release automation."
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

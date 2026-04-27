@@ -7,13 +7,14 @@ them without an MCP server, schema file, or browser dashboard.
 
 ## Current state
 
-- **Version**: v0.4.0 (operator superpowers on top of v0.3.x production hardening)
+- **Version**: v0.4.1 (send-confirmation safety patch + release automation on top of v0.4.0)
 - **Research**: see [/research](./research) for the five dossiers that informed the original design
 - **Recent plans**:
   - [v0.2 rearchitecture](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md) (shipped as v0.2.0)
   - [v0.3 production-grade 10k](./docs/plans/2026-04-09-phase-8-v0.3-production-grade-10k.md) (shipped as v0.3.0)
   - [v0.3.1 emergency hardening](./docs/plans/2026-04-09-phase-9-v0.3.1-emergency-hardening.md) (shipped as v0.3.1)
   - [v0.4 operator superpowers](./docs/plans/2026-04-09-v0.4-operator-superpowers.md) (shipped as v0.4.0)
+  - v0.4.1 patch: explicit broadcast approval, safer template-render guidance, click payload passthrough, release automation
 
 ## Production hardening (v0.3.x)
 
@@ -29,6 +30,7 @@ What "production-grade" means in this codebase:
 - **Operator escape hatches**: `broadcast send <id> --confirm --force-unlock` overrides a held send lock when the previous process is confirmed dead (use only after `ps aux | grep mailing-list-cli`).
 - **Honest limitations**: the 30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading only `last_event` per row. The guards still fire and remain useful safety nets, but the exact percentages are best-effort approximations — see `agent-info → known_limitations` and the docstring on `historical_send_rates`. Proper fix is v0.5+ pending an upstream change to email-cli or a rolling-window snapshot diff. Source: GPT Pro F3.2 from 2026-04-09 hardening review.
 - **Click reporting limitation**: `report show` can count clicked emails from `last_event=clicked`. `report links` needs link payload from `email-cli` (`click.link` or `link`); the poll path stores it when present, but cannot infer the CTA URL from `last_event` alone.
+- **Tracking workflow**: run `webhook poll` / `event poll` after sends. The CLI shells out to `email-cli email list`, maps `last_event` into local `event` rows, stores `click` rows when link payload exists, then reports from SQLite via `report show` / `report links`.
 
 ## Conventions
 
@@ -42,6 +44,7 @@ This project follows the [agent-cli-framework](https://github.com/paperfoot/agen
 - Config under `~/.config/mailing-list-cli/config.toml`
 - Cache under `~/.cache/mailing-list-cli/` (always safe to `rm -rf`)
 - **Integrated preview.** `template preview <name>` writes rendered HTML to disk and optionally opens it in the default browser. This is the core iteration primitive — it replaces every "catch the mistake upfront" safety net the v0.1 system had.
+- **Release automation.** Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, verifies the tag matches `Cargo.toml`, publishes crates.io, updates the Homebrew tap, and creates/updates a GitHub release. Required repo secrets are listed in `docs/release.md`.
 - **Template render is not send-ready stdout.** `template render <name>` emits the full JSON envelope. If you need the rendered HTML for custom tooling, extract `.data.html` after checking `status == "success"` and `data.lint_errors == 0`; never pass the whole stdout to `email-cli --html`. Prefer `broadcast preview <id> --to <email>` for inbox tests because it runs the same strict render/compliance path as a real send.
 
 ## Discovery

@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.4.0 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.0_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.4.1 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.1_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -130,6 +130,13 @@ recorded when the upstream `email-cli email list` row includes `click.link` or
 `link`; if the upstream row only exposes `last_event=clicked`, the aggregate
 `clicked_count` updates but `report links` cannot infer the clicked URL.
 
+Tracking is a local mirror, not a direct Resend API call from this binary:
+
+1. `mailing-list-cli webhook poll` (alias: `event poll`) asks `email-cli email list` for recent email rows.
+2. `email-cli` is the only tool that talks to Resend. It returns each email id plus `last_event` and, when available, click payloads such as `click.link`.
+3. `mailing-list-cli` matches the returned Resend email id to `broadcast_recipient.resend_email_id`, writes an idempotent row to the local `event` table, stores CTA link rows in `click` when the URL is present, and updates the broadcast counters.
+4. Agents read the mirror with `report show <broadcast-id>`, `report links <broadcast-id>`, `report engagement`, and `report deliverability`.
+
 ### Compliance & Hygiene
 
 | Command | What it does |
@@ -156,6 +163,10 @@ v0.2 dropped the long-running HTTP listener (`tiny_http` + Svix HMAC verifier) â
 | `agent-info` | Self-describing JSON manifest of every command, flag, and exit code |
 | `skill install` | Drop the embedded skill file into Claude / Codex / Gemini paths |
 | `update` | Self-update from GitHub Releases |
+
+Release automation is documented in [docs/release.md](./docs/release.md). This
+is a Rust binary: `cargo` and Homebrew are the supported package channels; there
+are no `uv` or `bun` artifacts.
 
 ## Architecture
 

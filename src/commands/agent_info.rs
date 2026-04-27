@@ -46,10 +46,10 @@ pub fn run() {
             "broadcast cancel <id> --confirm": "Cancel a draft or scheduled broadcast",
             "broadcast ls [--status <s>] [--limit N]": "List recent broadcasts",
             "broadcast show <id>": "Show broadcast details including recipient + stat counts",
-            "webhook poll [--reset]": "Poll email-cli for delivery status updates (alias: `event poll`)",
+            "webhook poll [--reset]": "Poll `email-cli email list` for delivery/click status updates and mirror them into local SQLite (alias: `event poll`)",
             "event poll [--reset]": "Alias for `webhook poll`",
-            "report show <broadcast-id>": "Per-broadcast summary (delivered/bounced/opened/clicked/CTR)",
-            "report links <broadcast-id>": "Per-link click counts for a broadcast",
+            "report show <broadcast-id>": "Per-broadcast summary from the local event mirror (delivered/bounced/opened/clicked/CTR). Run `event poll` first to sync latest Resend state via email-cli",
+            "report links <broadcast-id>": "Per-link click counts for a broadcast when email-cli exposes click.link or link payloads",
             "report engagement [--list <name>|--segment <name>] [--days N]": "Engagement score across a list/segment",
             "report deliverability [--days N]": "Rolling-window bounce rate / complaint rate / domain health",
             "update [--check]": "(stub) Self-update from GitHub Releases — not yet implemented, reinstall via cargo or homebrew",
@@ -80,12 +80,30 @@ pub fn run() {
             "MLC_UNSUBSCRIBE_SECRET": "HMAC secret for one-click unsubscribe link signatures. Required for `broadcast send`. Min 16 bytes"
         },
         "depends_on": ["email-cli >= 0.6.0"],
+        "tracking": {
+            "sync_command": "mailing-list-cli event poll",
+            "source": "email-cli email list; email-cli is the sole Resend API client",
+            "read_commands": [
+                "mailing-list-cli report show <broadcast-id>",
+                "mailing-list-cli report links <broadcast-id>",
+                "mailing-list-cli report engagement",
+                "mailing-list-cli report deliverability"
+            ],
+            "local_tables": ["broadcast_recipient", "event", "click", "broadcast"],
+            "flow": [
+                "email-cli returns each email id, last_event, and optional click payload",
+                "mailing-list-cli matches email id to broadcast_recipient.resend_email_id",
+                "the event handler inserts an idempotent event row, updates broadcast counters, and stores click.link rows when present",
+                "report commands read the local SQLite mirror"
+            ],
+            "limitation": "last_event is a latest-state snapshot per email. It is enough for aggregate clicked/opened/bounced counts, but per-link CTA reporting needs click.link or link payload from email-cli."
+        },
         "known_limitations": [
             "email-cli profile selection is database-implicit. The `[email_cli].profile` config field is used ONLY by the health-check `profile test` call. email-cli 0.6.3 has no global `--profile <name>` flag, so other commands cannot select a profile per-invocation. Multi-profile setups are ambiguous — `mailing-list-cli health` will warn if more than one email-cli profile is configured. Track the upstream issue at paperfoot/email-cli.",
             "30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading `last_event` per row. This means later state changes on already-seen emails are invisible, and only the most recent event per email is recorded. Treat the rates as approximate. The guards still fire (and are still useful safety nets), but operators should not over-trust the exact percentages. Source: GPT Pro F3.2 from 2026-04-09 hardening review. See docs/email-cli-gap-analysis.md.",
             "`report show` can count clicked emails from `last_event=clicked`; `report links` needs click link payload (`click.link` or `link`) from email-cli. The poll path stores it when present, but if upstream only exposes last_event then per-link CTA rows remain empty while clicked_count still increments."
         ],
-        "status": "v0.4.0 — operator superpowers: content snapshots at send time (compliance audit trail), broadcast send --dry-run (projected counts without sending), explicit broadcast send/resume --confirm approval, UTM link auto-injection on every outbound <a> tag (utm_source/medium/campaign), Stripe client_reference_id auto-injection on buy.stripe.com/checkout.stripe.com URLs, revenue tracking (revenue add/ls/import --from-stripe-csv, report revenue, report ltv), idempotent broadcast create (detect-and-fail on duplicate names), subscriber integration docs. Built on v0.3.x hardening foundations (lock CAS, write-ahead attempt log, subprocess timeout, schema check)."
+        "status": "v0.4.1 — safety/release patch: explicit broadcast send/resume --confirm approval, safer template-render guidance so agents use .data.html instead of the JSON envelope, click payload passthrough for report links when email-cli exposes it, tracking flow documented in agent-info, and tag-driven crates.io/Homebrew/GitHub release automation. Built on v0.4.0 operator superpowers and v0.3.x hardening foundations."
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

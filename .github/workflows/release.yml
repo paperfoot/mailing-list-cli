@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, for example v0.4.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-release-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Validate tag and Cargo version
+        id: meta
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must look like vX.Y.Z, got ${TAG}"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          CARGO_VERSION="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag ${TAG} does not match Cargo.toml version ${CARGO_VERSION}"
+            exit 1
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --release --locked --verbose
+
+      - name: Test
+        run: cargo test --all-features --locked --verbose -- --test-threads=1
+
+      - name: Package
+        run: cargo package --locked
+
+  publish_crates:
+    name: Publish crates.io
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crate
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          if curl -fsS "https://crates.io/api/v1/crates/mailing-list-cli/${VERSION}" >/dev/null; then
+            echo "mailing-list-cli ${VERSION} is already on crates.io; skipping publish."
+            exit 0
+          fi
+
+          TOKEN="${CARGO_REGISTRY_TOKEN:-$CRATES_IO_TOKEN}"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Set CARGO_REGISTRY_TOKEN or CRATES_IO_TOKEN in paperfoot/mailing-list-cli secrets."
+            exit 1
+          fi
+
+          cargo publish --locked --token "$TOKEN"
+
+  update_homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Update formula
+        shell: bash
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::error::Set HOMEBREW_TAP_TOKEN in paperfoot/mailing-list-cli secrets. It needs contents:write access to 199-biotechnologies/homebrew-tap."
+            exit 1
+          fi
+
+          TARBALL_URL="https://github.com/paperfoot/mailing-list-cli/archive/refs/tags/${TAG}.tar.gz"
+          curl -fsSL "$TARBALL_URL" -o /tmp/mailing-list-cli.tar.gz
+          SHA256="$(sha256sum /tmp/mailing-list-cli.tar.gz | awk '{ print $1 }')"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/199-biotechnologies/homebrew-tap.git" tap
+          cd tap
+          mkdir -p Formula
+          cat > Formula/mailing-list-cli.rb <<RUBY
+class MailingListCli < Formula
+  desc "Newsletter and mailing list management from the terminal. Built for AI agents on top of email-cli"
+  homepage "https://github.com/paperfoot/mailing-list-cli"
+  url "${TARBALL_URL}"
+  sha256 "${SHA256}"
+  license "MIT"
+  head "https://github.com/paperfoot/mailing-list-cli.git", branch: "main"
+
+  depends_on "rust" => :build
+
+  def install
+    system "cargo", "install", *std_cargo_args
+  end
+
+  test do
+    assert_match "mailing-list-cli", shell_output("#{bin}/mailing-list-cli --version")
+    assert_match "agent-info", shell_output("#{bin}/mailing-list-cli --help")
+  end
+end
+RUBY
+
+          if git diff --quiet -- Formula/mailing-list-cli.rb; then
+            echo "Homebrew formula already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mailing-list-cli.rb
+          git commit -m "mailing-list-cli ${TAG}"
+          git push origin HEAD:main
+
+  github_release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - verify
+      - publish_crates
+      - update_homebrew
+    steps:
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          NOTES="$(cat <<'NOTES'
+Automated release for mailing-list-cli.
+
+Install or update:
+
+```bash
+cargo install mailing-list-cli --force
+brew update && brew upgrade mailing-list-cli
+```
+NOTES
+)"
+
+          if gh release view "$TAG" --repo paperfoot/mailing-list-cli >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo paperfoot/mailing-list-cli --title "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" --repo paperfoot/mailing-list-cli --verify-tag --title "$TAG" --notes "$NOTES"
+          fi

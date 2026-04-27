@@ -477,7 +477,7 @@ impl EmailCli {
                             first_line
                         ),
                         suggestion:
-                            "Resend is rate-limiting or unreachable. Wait and resume the broadcast with `broadcast resume <id>`, or raise your Resend plan limits."
+                            "Resend is rate-limiting or unreachable. Wait and resume the broadcast with `broadcast resume <id> --confirm`, or raise your Resend plan limits."
                                 .into(),
                     });
                 }
@@ -750,6 +750,12 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    // The subprocess tests configure the shell stub through process-wide env
+    // vars. Serialize those tests so default `cargo test` is as reliable as
+    // the CI-style `--test-threads=1` run.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn missing_email_cli_returns_config_error() {
@@ -798,9 +804,9 @@ mod tests {
 
     #[test]
     fn batch_send_retries_on_429_then_succeeds() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let counter = fresh_counter_file("429");
-        // SAFETY: tests run with --test-threads=1 per CI, and retry tests use
-        // unique counter files to avoid interfering with each other.
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::set_var("STUB_EMAIL_CLI_FAIL_COUNT", "2");
             std::env::set_var("STUB_EMAIL_CLI_COUNTER_FILE", &counter);
@@ -830,7 +836,8 @@ mod tests {
 
     #[test]
     fn batch_send_does_not_retry_on_permanent_4xx_error() {
-        // SAFETY: see note above on env-var usage.
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::set_var("STUB_EMAIL_CLI_PERMANENT_4XX", "1");
             std::env::remove_var("STUB_EMAIL_CLI_FAIL_COUNT");
@@ -863,8 +870,10 @@ mod tests {
 
     #[test]
     fn batch_send_rate_limited_variant_when_retries_exhausted() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // FAIL_COUNT larger than MAX_RETRIES + 1 (so every attempt fails 429)
         let counter = fresh_counter_file("exhausted");
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::set_var("STUB_EMAIL_CLI_FAIL_COUNT", "99");
             std::env::set_var("STUB_EMAIL_CLI_COUNTER_FILE", &counter);
@@ -934,7 +943,9 @@ mod tests {
 
     #[test]
     fn run_with_timeout_completes_under_deadline() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Default 120s timeout — fast stub returns normally.
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::remove_var("MLC_EMAIL_CLI_TIMEOUT_SEC");
             std::env::remove_var("STUB_EMAIL_CLI_SLEEP_SEC");
@@ -951,7 +962,9 @@ mod tests {
 
     #[test]
     fn run_with_timeout_kills_hung_subprocess() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Stub sleeps 5 seconds; we set timeout to 1 second; should kill at ~1s.
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::set_var("MLC_EMAIL_CLI_TIMEOUT_SEC", "1");
             std::env::set_var("STUB_EMAIL_CLI_SLEEP_SEC", "5");
@@ -980,7 +993,9 @@ mod tests {
 
     #[test]
     fn run_with_timeout_env_var_parses_higher_value() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Sanity: setting a higher timeout still works for fast stubs.
+        // SAFETY: process-wide env access is serialized by ENV_MUTEX.
         unsafe {
             std::env::set_var("MLC_EMAIL_CLI_TIMEOUT_SEC", "300");
             std::env::remove_var("STUB_EMAIL_CLI_SLEEP_SEC");

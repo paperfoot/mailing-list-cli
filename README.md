@@ -88,11 +88,13 @@ Filter expressions are a JSON AST (v0.2 dropped the string DSL — agents emit J
 | `template create <name> --subject "..." [--from-file <path>]` | Create a plain-HTML template (or scaffold) |
 | `template ls` | List local templates |
 | `template show <name>` | Print the raw HTML source |
-| `template render <name> --with-data <file>` | Render to JSON envelope with `{subject, html, text}` |
+| `template render <name> --with-data <file>` | Render to a JSON envelope; sendable HTML is in `.data.html` |
 | `template preview <name> --with-data <file> [--out-dir <path>] [--open]` | Write preview to disk and optionally open in the browser |
 | `template lint <name>` | 6-rule compliance check (CAN-SPAM + size + XSS allowlist + forbidden tags) |
 
 Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals. Triple-brace `{{{ name }}}` is an allowlisted XSS-safe escape hatch, reserved for `unsubscribe_link` and `physical_address_footer` only. The send pipeline hard-fails on any unresolved placeholder before a single email goes out.
+
+`template render` is for machine inspection and always prints the full CLI JSON envelope. Do not pass its whole stdout to `email-cli --html`; use `template preview` for rendered files, `broadcast preview` for test emails, or extract `jq -r '.data.html'` after checking `lint_errors == 0`.
 
 ### Broadcasts (Campaigns)
 
@@ -101,10 +103,18 @@ Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals
 | `broadcast create --template <name> --to <segment>` | Stage a broadcast |
 | `broadcast preview <id> --to <email>` | Send a single test |
 | `broadcast schedule <id> --at <time>` | Schedule for later |
-| `broadcast send <id>` | Send now |
+| `broadcast send <id> --dry-run` | Project recipient counts and preflight checks without sending |
+| `broadcast send <id> --confirm` | Send now, after explicit approval |
 | `broadcast cancel <id>` | Cancel a scheduled broadcast |
 | `broadcast ab <id> --vary subject --variants 2 --winner-by opens` | Configure A/B test |
 | `broadcast ls` | Recent broadcasts and their statuses |
+
+Large broadcasts are sent in chunks of 100 through `email-cli batch send`.
+Each chunk is recorded in `broadcast_send_attempt` before the ESP call and
+applied after acknowledgement, so resume skips already-sent recipients instead
+of repeating them. To test a 1,000-recipient slice, target a list or segment
+with those 1,000 recipients, run `broadcast send <id> --dry-run`, then send
+that separate test broadcast with `--confirm`.
 
 ### Analytics
 
@@ -114,6 +124,11 @@ Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals
 | `report links <broadcast-id>` | Click count per link |
 | `report engagement --segment <id>` | Engagement scores across a segment |
 | `report deliverability` | Domain health: bounce rate, complaint rate, DMARC pass rate |
+
+Click counting is integrated through `event poll`. Per-link CTA reporting is
+recorded when the upstream `email-cli email list` row includes `click.link` or
+`link`; if the upstream row only exposes `last_event=clicked`, the aggregate
+`clicked_count` updates but `report links` cannot infer the clicked URL.
 
 ### Compliance & Hygiene
 

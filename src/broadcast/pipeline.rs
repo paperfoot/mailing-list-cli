@@ -130,7 +130,7 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
                         "broadcast {id} is already being sent by process {holder}, started {locked_at}"
                     ),
                     suggestion: format!(
-                        "Wait for the other process to finish, OR if you're sure it died, run `broadcast send {id} --force-unlock`"
+                        "Wait for the other process to finish, OR if you're sure it died, run `broadcast send {id} --confirm --force-unlock`"
                     ),
                 });
             }

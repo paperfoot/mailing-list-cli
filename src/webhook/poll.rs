@@ -58,6 +58,31 @@ pub fn poll_events(db: &Db, cli: &EmailCli, reset_cursor: bool) -> Result<PollRe
                     .collect()
             })
             .unwrap_or_default();
+        let click = entry
+            .get("click")
+            .and_then(|v| serde_json::from_value::<ClickInfo>(v.clone()).ok())
+            .or_else(|| {
+                entry
+                    .get("link")
+                    .and_then(|v| v.as_str())
+                    .map(|link| ClickInfo {
+                        link: link.to_string(),
+                        ip_address: entry
+                            .get("ip_address")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        user_agent: entry
+                            .get("user_agent")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        timestamp: entry
+                            .get("clicked_at")
+                            .or_else(|| entry.get("created_at"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                    })
+            });
+
         let ev = ResendEvent {
             event_type,
             created_at: entry
@@ -73,7 +98,7 @@ pub fn poll_events(db: &Db, cli: &EmailCli, reset_cursor: bool) -> Result<PollRe
                     .and_then(|v| v.as_str())
                     .map(String::from),
                 bounce: None, // poll path doesn't expose bounce subtype
-                click: None,
+                click,
                 complaint_type: None,
                 tags: entry.get("tags").cloned().unwrap_or(Value::Null),
             },

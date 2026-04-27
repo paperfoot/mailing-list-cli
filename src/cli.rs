@@ -341,7 +341,7 @@ pub enum TemplateAction {
     List,
     /// Print a template's HTML source
     Show(TemplateShowArgs),
-    /// Render a template with merge data (returns JSON envelope with embedded html/text)
+    /// Render a template with merge data (JSON envelope; raw HTML is .data.html)
     Render(TemplateRenderArgs),
     /// Write a rendered preview to disk for iteration (and optionally open in browser)
     Preview(TemplatePreviewArgs),
@@ -420,8 +420,9 @@ pub enum BroadcastAction {
     Preview(BroadcastPreviewArgs),
     /// Move a draft broadcast into scheduled status
     Schedule(BroadcastScheduleArgs),
-    /// Send the broadcast now (runs the full pipeline). Safe to re-run on
-    /// an interrupted broadcast — already-sent recipients are skipped.
+    /// Send the broadcast now (requires --confirm; runs the full pipeline).
+    /// Safe to re-run on an interrupted broadcast — already-sent recipients
+    /// are skipped.
     Send(BroadcastSendArgs),
     /// Resume an interrupted broadcast send. Identical behavior to `send`
     /// (both skip already-sent recipients), but the name makes intent
@@ -467,14 +468,20 @@ pub struct BroadcastScheduleArgs {
 #[derive(Args, Debug)]
 pub struct BroadcastSendArgs {
     pub id: i64,
+    /// Required for real sends and resumes. This is intentionally
+    /// non-interactive so agents cannot accidentally ship a campaign by
+    /// invoking `broadcast send <id>` without an explicit approval token.
+    /// Not required for --dry-run.
+    #[arg(long)]
+    pub confirm: bool,
     /// Force-acquire the send lock even if another process appears to hold
     /// it. USE WITH CAUTION: only after confirming the other process is
     /// truly dead (e.g., `ps aux | grep mailing-list-cli`). Risk: double-send
     /// if the other process is still alive and rendering chunks.
     #[arg(long)]
     pub force_unlock: bool,
-    /// Dry-run: resolve recipients, run preflight checks, render every
-    /// chunk, and report what WOULD be sent — but do not call email-cli
+    /// Dry-run: resolve recipients, run preflight checks, render one
+    /// sample, and report what WOULD be sent — but do not call email-cli
     /// or modify any broadcast state. Exit 0 with the projected counts.
     #[arg(long)]
     pub dry_run: bool,

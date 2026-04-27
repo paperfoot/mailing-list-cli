@@ -150,6 +150,17 @@ fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
         return Ok(());
     }
 
+    if !args.confirm {
+        return Err(AppError::BadInput {
+            code: "confirmation_required".into(),
+            message: format!("sending broadcast {} requires --confirm", args.id),
+            suggestion: format!(
+                "First run `mailing-list-cli broadcast send {} --dry-run`; after reviewing the projected counts and preview email, rerun with `mailing-list-cli broadcast send {} --confirm`",
+                args.id, args.id
+            ),
+        });
+    }
+
     let result = pipeline::send_broadcast(args.id, args.force_unlock)?;
     let data = json!({
         "broadcast_id": result.broadcast_id,
@@ -181,7 +192,7 @@ fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
                 result.failed_count
             ),
             suggestion: format!(
-                "Run `mailing-list-cli broadcast resume {}` to retry the failed chunks",
+                "Run `mailing-list-cli broadcast resume {} --confirm` to retry the failed chunks",
                 args.id
             ),
         });

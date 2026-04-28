@@ -148,6 +148,49 @@ fn help_flag_exits_zero() {
 }
 
 #[test]
+fn skill_install_writes_embedded_skill_to_custom_root() {
+    let tmp = isolated_env();
+    let skill_root = tmp.path().join("skills");
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_SKILL_ROOTS", &skill_root)
+        .args(["--json", "skill", "install"]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["data"]["skill"], "mailing-list-cli");
+    assert_eq!(v["data"]["targets"][0]["current"], true);
+
+    let skill_path = skill_root.join("mailing-list-cli").join("SKILL.md");
+    let text = std::fs::read_to_string(&skill_path).unwrap();
+    assert!(text.contains("Current stable: `mailing-list-cli v"));
+    assert!(text.contains("data-utm=\"off\""));
+    assert!(text.contains("There are no `uv` or `bun` artifacts"));
+}
+
+#[test]
+fn skill_status_reports_current_after_install() {
+    let tmp = isolated_env();
+    let skill_root = tmp.path().join("skills");
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_SKILL_ROOTS", &skill_root)
+        .args(["--json", "skill", "install"])
+        .assert()
+        .success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_SKILL_ROOTS", &skill_root)
+        .args(["--json", "skill", "status"]);
+    let out = cmd.assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["data"]["current_count"], 1);
+    assert_eq!(v["data"]["target_count"], 1);
+    assert_eq!(v["data"]["targets"][0]["current"], true);
+}
+
+#[test]
 fn health_with_stub_email_cli_succeeds() {
     let stub = fixture_path("stub-email-cli.sh");
     assert!(stub.exists(), "stub-email-cli.sh must exist at {:?}", stub);

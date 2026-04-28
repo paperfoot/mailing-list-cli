@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.4.2 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.2_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.4.3 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.3_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -47,7 +47,7 @@ The existing options for an agent are bad:
 
 ## Status
 
-> **v0.4.2 — deliverability footer/text patch on the production send path.**
+> **v0.4.3 — embedded skill installer plus the production send hardening.**
 >
 > `broadcast send` now requires explicit `--confirm`, sends in resumable chunks
 > of 100 through `email-cli batch send`, emits RFC 8058 one-click unsubscribe
@@ -63,6 +63,10 @@ The existing options for an agent are bad:
 > Release automation is live: pushing a `vX.Y.Z` tag runs verification,
 > publishes crates.io, updates the Homebrew tap, and creates the GitHub release.
 > See [docs/release.md](./docs/release.md).
+>
+> `mailing-list-cli skill install` writes the bundled agent skill to Codex,
+> Claude, Gemini, and `.agents` skill roots. Use `mailing-list-cli skill status`
+> to check whether installed copies match the binary.
 
 ## Planned Commands
 
@@ -106,6 +110,10 @@ Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals
 `template render` is for machine inspection and always prints the full CLI JSON envelope. Do not pass its whole stdout to `email-cli --html`; use `template preview` for rendered files, `broadcast preview` for test emails, or extract `jq -r '.data.html'` after checking `lint_errors == 0`.
 
 Rendered plain-text alternatives preserve links as `Label (URL)`. Generated unsubscribe anchors include `data-utm="off"` so the compliance link in the body is not rewritten with tracking parameters, while normal CTA links still receive campaign UTM tags.
+
+`template lint` warns on fragile semantic layout tags such as `<main>` and on
+unstyled text links, because email clients may collapse browser-style layout
+and fall back to default blue/purple hyperlinks.
 
 ### Broadcasts (Campaigns)
 
@@ -173,6 +181,7 @@ v0.2 dropped the long-running HTTP listener (`tiny_http` + Svix HMAC verifier) �
 |---|---|
 | `agent-info` | Self-describing JSON manifest of every command, flag, and exit code |
 | `skill install` | Drop the embedded skill file into Claude / Codex / Gemini paths |
+| `skill status` | Show whether installed skill copies match the binary |
 | `update` | Self-update from GitHub Releases |
 
 Release automation is documented in [docs/release.md](./docs/release.md). This

@@ -53,8 +53,8 @@ pub fn run() {
             "report engagement [--list <name>|--segment <name>] [--days N]": "Engagement score across a list/segment",
             "report deliverability [--days N]": "Rolling-window bounce rate / complaint rate / domain health",
             "update [--check]": "(stub) Self-update from GitHub Releases — not yet implemented, reinstall via cargo or homebrew",
-            "skill install": "(stub) Install skill files into Claude / Codex / Gemini paths — not yet implemented",
-            "skill status": "(stub) Show which platforms have the skill installed — not yet implemented"
+            "skill install": "Install the embedded mailing-list-cli skill into Codex, Claude, Gemini, and .agents skill roots. Override roots with MLC_SKILL_ROOTS for custom setups.",
+            "skill status": "Show whether installed skill copies match the embedded skill bundled in this binary."
         },
         "flags": {
             "--json": "Force JSON output even on a TTY (global flag, applies to every subcommand). Without --json, output mode is auto-detected via IsTerminal: TTY → human, pipe/redirect → JSON envelope"
@@ -77,7 +77,8 @@ pub fn run() {
         "env_prefix": "MLC_",
         "env_vars": {
             "MLC_EMAIL_CLI_TIMEOUT_SEC": "Timeout in seconds for any single email-cli subprocess invocation. Default: 120. On timeout, the child is killed via SIGKILL and the call returns `email_cli_timeout` (transient, feeds the existing retry path)",
-            "MLC_UNSUBSCRIBE_SECRET": "HMAC secret for one-click unsubscribe link signatures. Required for `broadcast send`. Min 16 bytes"
+            "MLC_UNSUBSCRIBE_SECRET": "HMAC secret for one-click unsubscribe link signatures. Required for `broadcast send`. Min 16 bytes",
+            "MLC_SKILL_ROOTS": "Optional colon-separated skill root override for `skill install` and `skill status`. Each root receives mailing-list-cli/SKILL.md. Mainly for tests or custom agent setups."
         },
         "depends_on": ["email-cli >= 0.6.0"],
         "tracking": {
@@ -100,8 +101,9 @@ pub fn run() {
         },
         "deliverability": {
             "headers": "broadcast send includes List-Unsubscribe and List-Unsubscribe-Post headers on every recipient payload",
-            "body_unsubscribe": "generated unsubscribe body anchors include data-utm=\"off\" so UTM rewriting does not decorate compliance links",
+            "body_unsubscribe": "generated unsubscribe body anchors include inline link style plus data-utm=\"off\" so UTM rewriting does not decorate compliance links",
             "plain_text": "the plain-text MIME alternative preserves anchor destinations as `Label (URL)` so CTA and unsubscribe URLs remain visible outside HTML clients",
+            "template_quality": "template lint warns on unstyled text links and fragile semantic layout tags such as <main>; use table-based wrappers and inline link styles for email clients",
             "operator_note": "Inbox placement still depends on DNS alignment, domain reputation, recipient engagement, content, and the provider's spam model. `mailing-list-cli health` verifies the Resend sender domain, but DMARC/SPF policy tuning and reputation monitoring are outside the local SQLite state."
         },
         "known_limitations": [
@@ -109,7 +111,7 @@ pub fn run() {
             "30-day complaint/bounce rate guards in `broadcast send` preflight are computed from the local `event` table, which is populated by `webhook poll` paginating `email-cli email list` by email ID and reading `last_event` per row. This means later state changes on already-seen emails are invisible, and only the most recent event per email is recorded. Treat the rates as approximate. The guards still fire (and are still useful safety nets), but operators should not over-trust the exact percentages. Source: GPT Pro F3.2 from 2026-04-09 hardening review. See docs/email-cli-gap-analysis.md.",
             "`report show` can count clicked emails from `last_event=clicked`; `report links` needs click link payload (`click.link` or `link`) from email-cli. The poll path stores it when present, but if upstream only exposes last_event then per-link CTA rows remain empty while clicked_count still increments."
         ],
-        "status": "v0.4.2 — deliverability patch: generated unsubscribe body links opt out of UTM rewriting, template render/preview stubs match send behavior, and plain-text MIME alternatives preserve CTA/unsubscribe URLs as Label (URL). Built on v0.4.1 explicit-send approval, tracking docs, and release automation."
+        "status": "v0.4.3 — embedded skill installer and template-quality patch: `skill install/status` now manage the bundled agent skill, template lint warns on fragile email markup/unstyled links, generated unsubscribe links are styled and opt out of UTM rewriting, and plain-text MIME alternatives preserve CTA/unsubscribe URLs as Label (URL). Built on v0.4.2 deliverability hardening."
     });
     println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
 }

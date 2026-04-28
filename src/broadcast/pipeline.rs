@@ -398,7 +398,7 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
                 })?;
             let unsubscribe_url = format!("{public_url}/{token}");
             let unsubscribe_html = format!(
-                "<a href=\"{}\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>",
+                "<a href=\"{}\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\" style=\"color:#4b5563;text-decoration:underline\">Unsubscribe</a>",
                 html_escape(&unsubscribe_url)
             );
             // v0.2.3+: inline <span> so the footer is safe to inject inside a
@@ -759,7 +759,7 @@ pub fn preview_broadcast(id: i64, to: &str) -> Result<PipelineResult, AppError> 
         "last_name": "Recipient",
         "email": to,
         "unsubscribe_link": format!(
-            "<a href=\"{}\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>",
+            "<a href=\"{}\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\" style=\"color:#4b5563;text-decoration:underline\">Unsubscribe</a>",
             html_escape(&unsubscribe_url)
         ),
         "physical_address_footer": footer_html,

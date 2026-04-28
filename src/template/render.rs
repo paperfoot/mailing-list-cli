@@ -68,6 +68,11 @@ pub enum LintRule {
     /// A `{{{ name }}}` triple-brace reference is not in the allowlist.
     /// Security-critical (XSS prevention).
     ForbiddenRawInjection,
+    /// An `<a href>` tag has no inline `style`, so clients will likely render
+    /// it as default blue/purple.
+    UnstyledLink,
+    /// Semantic layout tags are fragile in email clients; tables/divs are safer.
+    FragileEmailMarkup,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +210,29 @@ fn render_inner(
                 hint: "This tag is blocked by most email clients or by mailing-list-cli's security policy. Remove it.".into(),
             });
         }
+    }
+
+    let lower_html_source = html_source.to_ascii_lowercase();
+    let fragile_tags = ["<main", "<section", "<article", "<header", "<footer"];
+    if let Some(tag) = fragile_tags
+        .iter()
+        .find(|tag| lower_html_source.contains(**tag))
+    {
+        findings.push(LintFinding {
+            severity: Severity::Warning,
+            rule: LintRule::FragileEmailMarkup,
+            message: format!("template uses semantic layout tag `{tag}`"),
+            hint: "Use table-based wrappers or simple divs with inline styles for email-client layout compatibility. Gmail and other clients can handle HTML differently than browsers.".into(),
+        });
+    }
+
+    if count_unstyled_links(&body_html) > 0 {
+        findings.push(LintFinding {
+            severity: Severity::Warning,
+            rule: LintRule::UnstyledLink,
+            message: "one or more links are missing inline `style` attributes".into(),
+            hint: "Style every `<a>` tag inline (for example `style=\"color:#111827;text-decoration:underline\"`) so email clients do not fall back to default blue/purple links.".into(),
+        });
     }
 
     // Rule 5: Unresolved placeholders. Warning in preview, error in strict/send.
@@ -406,6 +434,34 @@ fn href_from_anchor_tag<'a>(tag: &'a str, tag_lower: &str) -> Option<&'a str> {
     let url_start = after_eq + 1;
     let url_len = tag[url_start..].find(q)?;
     Some(&tag[url_start..url_start + url_len])
+}
+
+fn count_unstyled_links(html: &str) -> usize {
+    let lower = html.to_ascii_lowercase();
+    let mut i = 0;
+    let mut count = 0;
+
+    while i < html.len() {
+        if lower[i..].starts_with("<a ")
+            || lower[i..].starts_with("<a\t")
+            || lower[i..].starts_with("<a\n")
+        {
+            let tag_end = match html[i..].find('>') {
+                Some(pos) => i + pos + 1,
+                None => break,
+            };
+            let tag_lower = &lower[i..tag_end];
+            if tag_lower.contains("href=") && !tag_lower.contains("style=") {
+                count += 1;
+            }
+            i = tag_end;
+        } else {
+            let ch = html[i..].chars().next().unwrap();
+            i += ch.len_utf8();
+        }
+    }
+
+    count
 }
 
 fn strip_inline_tags_to_text(html: &str) -> String {
@@ -715,7 +771,7 @@ pub fn lint(html_source: &str, subject_source: &str) -> Rendered {
         "email": "preview@example.invalid",
         "current_year": 2026,
         "broadcast_id": 0,
-        "unsubscribe_link": "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN_aaaaaaaaaaaaaaaaaaaaaaaaaa\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>",
+        "unsubscribe_link": "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN_aaaaaaaaaaaaaaaaaaaaaaaaaa\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\" style=\"color:#4b5563;text-decoration:underline\">Unsubscribe</a>",
         "physical_address_footer": "<span style=\"color:#666;font-size:11px\">Your Company Name · 123 Example Street · Suite 400 · City, ST 00000 · United States</span>"
     });
     let mut r = render_preview(html_source, subject_source, &stub);
@@ -808,6 +864,30 @@ mod tests {
         let src = format!("<p><script>evil()</script></p>{VALID}");
         let r = lint(&src, "subject");
         assert!(r.findings.iter().any(|f| f.rule == LintRule::ForbiddenTag));
+    }
+
+    #[test]
+    fn lint_warns_on_fragile_email_markup() {
+        let src = format!("<main><p>body</p></main>{VALID}");
+        let r = lint(&src, "subject");
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.rule == LintRule::FragileEmailMarkup),
+            "findings: {:?}",
+            r.findings
+        );
+    }
+
+    #[test]
+    fn lint_warns_on_unstyled_links() {
+        let src = format!(r#"<p><a href="https://example.com">Blue</a></p>{VALID}"#);
+        let r = lint(&src, "subject");
+        assert!(
+            r.findings.iter().any(|f| f.rule == LintRule::UnstyledLink),
+            "findings: {:?}",
+            r.findings
+        );
     }
 
     #[test]

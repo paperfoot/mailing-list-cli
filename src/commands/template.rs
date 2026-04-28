@@ -62,39 +62,46 @@ const SCAFFOLD: &str = r##"<!--
   <meta charset="utf-8">
   <title>{{ NAME }}</title>
 </head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f4f4">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+<body style="margin:0;padding:0;background:#f3f0e8;color:#111827;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#f3f0e8;">
     <tr>
-      <td align="center" style="padding:20px">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;max-width:600px">
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:640px;border-collapse:collapse;background:#ffffff;border:1px solid #e5e1d8;">
           <tr>
-            <td style="padding:30px">
-              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;color:#111">
+            <td style="padding:34px 32px 30px;">
+              <p style="margin:0 0 22px;font-size:12px;line-height:1.4;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;">
+                Newsletter
+              </p>
+              <h1 style="margin:0 0 18px;font-size:28px;line-height:1.18;color:#111827;font-weight:700;">
                 Hi {{ first_name }}
               </h1>
-              <p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#333">
+              <p style="margin:0 0 16px;font-size:16px;line-height:1.62;color:#1f2937;">
                 Replace this body with your content. Write normal HTML with
-                inline styles for best client compatibility. Use double-brace
-                merge tags (see the comment above this template) for contact
-                fields.
+                table-based wrappers and inline styles for best client
+                compatibility. Avoid semantic layout tags like <code>&lt;main&gt;</code>
+                in production email.
               </p>
               {{#if referral_code}}
-              <p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#333">
+              <p style="margin:0 0 16px;font-size:16px;line-height:1.62;color:#1f2937;">
                 You used referral code <strong>{{ referral_code }}</strong>, so your first order ships free.
               </p>
               {{/if}}
               {{#unless referral_code}}
-              <p style="margin:0 0 16px;font-size:16px;line-height:1.5;color:#333">
+              <p style="margin:0 0 16px;font-size:16px;line-height:1.62;color:#1f2937;">
                 No referral code this time — welcome aboard anyway.
               </p>
               {{/unless}}
-              <p style="margin:0 0 16px">
+              <p style="margin:26px 0 28px;">
                 <a href="https://example.com/cta"
-                   style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px;font-weight:600">
+                   style="display:inline-block;padding:12px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:4px;font-size:14px;line-height:1.2;font-weight:700">
                   Call to action
                 </a>
               </p>
-              <p style="margin:30px 0 0;padding-top:20px;border-top:1px solid #eaeaea;font-size:12px;color:#666;text-align:center">
+              <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#1f2937;">
+                Use inline link styles for text links too:
+                <a href="https://example.com" style="color:#111827;text-decoration:underline;">example link</a>.
+              </p>
+              <p style="margin:32px 0 0;padding-top:18px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.5;color:#6b7280;text-align:left">
                 {{{ unsubscribe_link }}}
                 <br>
                 {{{ physical_address_footer }}}
@@ -231,7 +238,7 @@ fn render(format: Format, args: TemplateRenderArgs) -> Result<(), AppError> {
     if !args.raw {
         if let Value::Object(map) = &mut data {
             map.entry(String::from("unsubscribe_link")).or_insert(json!(
-                "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>"
+                "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\" style=\"color:#4b5563;text-decoration:underline\">Unsubscribe</a>"
             ));
             map.entry(String::from("physical_address_footer")).or_insert(json!(
                 "<span style=\"color:#666;font-size:11px\">Your Company Name · 123 Example Street · City, ST 00000</span>"
@@ -275,7 +282,7 @@ fn preview(format: Format, args: TemplatePreviewArgs) -> Result<(), AppError> {
     // preview renders a full, visually accurate output.
     if let Value::Object(map) = &mut data {
         map.entry(String::from("unsubscribe_link")).or_insert(json!(
-            "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\">Unsubscribe</a>"
+            "<a href=\"https://hooks.example.invalid/u/PLACEHOLDER_UNSUBSCRIBE_TOKEN\" target=\"_blank\" rel=\"nofollow\" data-utm=\"off\" style=\"color:#4b5563;text-decoration:underline\">Unsubscribe</a>"
         ));
         // Inline <span> stub so it's safe to inject inside a `<p>` or any other
         // inline context in the template — matches the broadcast pipeline's

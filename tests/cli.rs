@@ -97,13 +97,13 @@ fn agent_info_includes_v0_3_1_surface() {
     assert!(
         commands
             .keys()
-            .any(|k| k == "broadcast send <id> --confirm [--force-unlock]"),
+            .any(|k| k.starts_with("broadcast send <id> --confirm [--force-unlock]")),
         "agent-info must advertise --confirm for real broadcast sends"
     );
     assert!(
         commands
             .keys()
-            .any(|k| k == "broadcast send <id> --dry-run"),
+            .any(|k| k.starts_with("broadcast send <id> --dry-run")),
         "agent-info must advertise the no-send dry-run path separately"
     );
 
@@ -1831,6 +1831,9 @@ fn template_lint_missing_unsubscribe_errors() {
         .replace("{{{ unsubscribe_link }}}", "")
         .replace("name: welcome", "name: bad");
     let template_path = write_template_file(&tmp, "bad", &bad);
+    // v0.4.5: `template create` now refuses to import a source with lint
+    // errors. Use `--force` to land the broken template so the lint
+    // pathway can still be exercised on stored content.
     let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
     cmd.env("MLC_CONFIG_PATH", &config_path)
         .env("MLC_DB_PATH", &db_path)
@@ -1841,6 +1844,7 @@ fn template_lint_missing_unsubscribe_errors() {
             "bad",
             "--from-file",
             template_path.to_str().unwrap(),
+            "--force",
         ]);
     cmd.assert().success();
 
@@ -1888,6 +1892,67 @@ export function EmailPreview() {
             .any(|f| f["code"] == "browser_or_jsx_source"),
         "findings: {}",
         v["data"]["design_findings"]
+    );
+}
+
+#[test]
+fn template_create_blocks_browser_prototype_without_force() {
+    // v0.4.5: `template create --from-file design.jsx` must refuse import,
+    // returning code `template_create_design_blocked` so the agent can route
+    // through conversion before retrying.
+    let (tmp, config_path, db_path) = stub_env();
+    let proto_path = tmp.path().join("handoff.jsx");
+    std::fs::write(
+        &proto_path,
+        r#"import React from 'react';
+export default function E() { return <main><a href="https://x">X</a></main>; }
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "handoff",
+            "--from-file",
+            proto_path.to_str().unwrap(),
+        ]);
+    let assert = cmd.assert().failure().code(3);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stderr).unwrap();
+    assert_eq!(v["error"]["code"], "template_create_design_blocked");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("browser_prototype_needs_conversion"),
+        "{stderr}"
+    );
+
+    // --force lands the import. `template ls` must then show it.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "handoff",
+            "--from-file",
+            proto_path.to_str().unwrap(),
+            "--force",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["forced"], true);
+    assert_eq!(
+        v["data"]["design_assessment"]["verdict"],
+        "browser_prototype_needs_conversion"
     );
 }
 
@@ -1956,20 +2021,27 @@ fn agent_info_lists_phase_4_commands() {
     let v: Value =
         serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
     let commands = v["commands"].as_object().unwrap();
-    for key in [
+    for prefix in [
         "template create <name> [--subject <text>] [--from-file <path>]",
         "template render <name> [--with-data <file.json>] [--raw]",
         "template inspect <name> | template inspect --from-file <path> [--subject <text>]",
         "template lint <name>",
     ] {
-        assert!(commands.contains_key(key), "agent-info missing {key}");
+        assert!(
+            commands.keys().any(|k| k.starts_with(prefix)),
+            "agent-info missing entry starting with `{prefix}`"
+        );
     }
     assert!(
         !commands.keys().any(|k| k.contains("--with-placeholders")),
         "agent-info must not advertise the removed --with-placeholders flag"
     );
+    let render_key = commands
+        .keys()
+        .find(|k| k.starts_with("template render <name> [--with-data <file.json>] [--raw]"))
+        .expect("template render entry must exist");
     assert!(
-        commands["template render <name> [--with-data <file.json>] [--raw]"]
+        commands[render_key]
             .as_str()
             .unwrap()
             .contains(".data.html"),
@@ -2801,4 +2873,127 @@ fn broadcast_send_hard_fails_on_unresolved_placeholder() {
         v["data"]["broadcast"]["status"], "failed",
         "broadcast must be marked failed after hard-fail, not left in 'sending'"
     );
+}
+
+// ─── v0.4.5: design-error preflight ────────────────────────────────────
+//
+// `template create --from-file` now refuses browser/JSX handoffs by default,
+// but a template stored with `--force` (or before v0.4.5 landed) can still be
+// JSX-shaped. The send pipeline must catch these via a second design-rule
+// preflight pass; if it didn't, the only thing between a forced-import JSX
+// blob and a real Resend call would be the substitution + lint passes, neither
+// of which scan for `<script>` or component-style tags.
+
+#[test]
+fn broadcast_send_blocks_jsx_template_until_allow_design_errors() {
+    let (tmp, config_path, db_path, cache_dir) = seed_broadcast_env();
+
+    // Force-land a JSX template that the v0.4.5 design check will flag as
+    // an error. Both required compliance placeholders are present so the
+    // 6-rule lint passes — the only thing between the template and a send
+    // is the design-error preflight added in this release.
+    let jsx_path = tmp.path().join("handoff.jsx");
+    std::fs::write(
+        &jsx_path,
+        r#"import React from 'react';
+export default function Email() {
+  return (
+    <html><body>
+      <p>Hi {{ first_name }}</p>
+      <p>{{{ unsubscribe_link }}}<br>{{{ physical_address_footer }}}</p>
+    </body></html>
+  );
+}
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "jsx_blob",
+            "--subject",
+            "Hi {{ first_name }}",
+            "--from-file",
+            jsx_path.to_str().unwrap(),
+            "--force",
+        ]);
+    cmd.assert().success();
+
+    // Stage a broadcast pointing at it.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .args([
+            "--json",
+            "broadcast",
+            "create",
+            "--name",
+            "design-block-test",
+            "--template",
+            "jsx_blob",
+            "--to",
+            "list:news",
+        ]);
+    cmd.assert().success();
+
+    // Default send must hard-fail at preflight with `template_has_design_errors`.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .env("MLC_UNSUBSCRIBE_SECRET", "test-secret-long-enough")
+        .args(["--json", "broadcast", "send", "1", "--confirm"]);
+    let assert = cmd.assert().failure().code(3);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stderr).unwrap();
+    assert_eq!(v["error"]["code"], "template_has_design_errors", "{stderr}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("browser_or_jsx_source"),
+        "{stderr}"
+    );
+
+    // --dry-run is also blocked (same preflight path), so a sloppy operator
+    // can't pretend the dry run was clean.
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .env("MLC_UNSUBSCRIBE_SECRET", "test-secret-long-enough")
+        .args(["--json", "broadcast", "send", "1", "--dry-run"]);
+    let assert = cmd.assert().failure().code(3);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    let v: Value = serde_json::from_str(&stderr).unwrap();
+    assert_eq!(v["error"]["code"], "template_has_design_errors");
+
+    // --allow-design-errors lets dry-run through (we can't go all the way to
+    // a real send here without an email-cli stub, but dry-run exercises the
+    // preflight + same-recipient resolution and counts).
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .env("MLC_CACHE_DIR", &cache_dir)
+        .env("MLC_UNSUBSCRIBE_SECRET", "test-secret-long-enough")
+        .args([
+            "--json",
+            "broadcast",
+            "send",
+            "1",
+            "--dry-run",
+            "--allow-design-errors",
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["dry_run"], true);
+    assert_eq!(v["data"]["allow_design_errors"], true);
 }

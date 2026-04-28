@@ -6,7 +6,7 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::output::{self, Format};
 use crate::paths;
-use crate::template::{self, Rendered};
+use crate::template::{self, DesignSeverity, Rendered};
 use serde_json::{Value, json};
 
 /// Built-in scaffold: a minimal, inline-styled HTML template that demonstrates
@@ -157,6 +157,65 @@ fn create(format: Format, args: TemplateCreateArgs) -> Result<(), AppError> {
         None => SCAFFOLD.replace("{{ NAME }}", &args.name),
     };
     let subject = args.subject.as_deref().unwrap_or("(no subject set)");
+
+    // v0.4.5: enforce the design + lint gate at create time. Previously the
+    // assessment was advisory only — `template create --from-file design.jsx`
+    // happily stored a React handoff as if it were a template. Now we refuse
+    // unless `--force` is passed. Scaffolded templates skip the gate (the
+    // built-in scaffold is always email-ready and uses the {{ NAME }}
+    // placeholder which would be flagged as `class_styles_without_inline_styles`
+    // before substitution otherwise).
+    let assessment_label = match &args.from_file {
+        Some(p) => format!("file:{}", p.display()),
+        None => "scaffold".to_string(),
+    };
+    let assessment = inspect_template_source(&assessment_label, &source, subject);
+    let conversion_required = assessment
+        .get("conversion_required")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let lint_errors = assessment
+        .get("lint_errors")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if args.from_file.is_some() && !args.force && (conversion_required || lint_errors > 0) {
+        let verdict = assessment
+            .get("verdict")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let suggestion = serde_json::to_string(&json!({
+            "verdict": verdict,
+            "lint_errors": lint_errors,
+            "design_errors": assessment.get("design_errors"),
+            "lint_findings": assessment.get("lint_findings"),
+            "design_findings": assessment.get("design_findings"),
+            "recommended_next_steps": assessment.get("recommended_next_steps"),
+            "override": "rerun with `--force` to store anyway (not recommended for browser/JSX handoffs)"
+        }))
+        .unwrap_or_else(|_| "{}".to_string());
+        let code = if conversion_required {
+            "template_create_design_blocked"
+        } else {
+            "template_create_lint_blocked"
+        };
+        let message = if conversion_required {
+            format!(
+                "refusing to import '{}': verdict is `{}`. Convert the source into static table-based email HTML before storing it as a template.",
+                args.name, verdict
+            )
+        } else {
+            format!(
+                "refusing to import '{}': source has {lint_errors} lint error(s). Fix them before storing.",
+                args.name
+            )
+        };
+        return Err(AppError::BadInput {
+            code: code.into(),
+            message,
+            suggestion,
+        });
+    }
+
     let id = db.template_upsert(&args.name, subject, &source)?;
     output::success(
         format,
@@ -167,7 +226,8 @@ fn create(format: Format, args: TemplateCreateArgs) -> Result<(), AppError> {
             "subject": subject,
             "size_bytes": source.len(),
             "scaffolded": args.from_file.is_none(),
-            "design_assessment": inspect_template_source("created_template", &source, subject)
+            "forced": args.force,
+            "design_assessment": assessment,
         }),
     );
     Ok(())
@@ -280,107 +340,20 @@ fn inspect(format: Format, args: TemplateInspectArgs) -> Result<(), AppError> {
 
 fn inspect_template_source(source_label: &str, html_source: &str, subject: &str) -> Value {
     let rendered = template::lint(html_source, subject);
-    let lower = html_source.to_ascii_lowercase();
-    let source_label_lower = source_label.to_ascii_lowercase();
-    let mut design_findings = Vec::new();
-
-    let mut push_design = |severity: &str, code: &str, message: &str, hint: &str| {
-        design_findings.push(json!({
-            "severity": severity,
-            "code": code,
-            "message": message,
-            "hint": hint
-        }));
-    };
-
-    let looks_like_js_source = source_label_lower.ends_with(".jsx")
-        || source_label_lower.ends_with(".tsx")
-        || source_label_lower.ends_with(".js")
-        || source_label_lower.ends_with(".ts")
-        || lower.contains("import react")
-        || lower.contains("from 'react'")
-        || lower.contains("from \"react\"")
-        || lower.contains("reactdom")
-        || lower.contains("createroot(");
-
-    if looks_like_js_source {
-        push_design(
-            "error",
-            "browser_or_jsx_source",
-            "source looks like a browser/React/JSX prototype, not send-ready email HTML",
-            "Extract the visual/content direction, then rewrite it as standalone table-based HTML with inline styles before `template create`.",
-        );
-    }
-
-    if lower.contains("<script")
-        || lower.contains("type=\"text/babel")
-        || lower.contains("type='text/babel")
-    {
-        push_design(
-            "error",
-            "browser_script_dependency",
-            "source depends on JavaScript or Babel",
-            "Email clients strip scripts. Remove JS entirely and express the final layout as static HTML tables with inline styles.",
-        );
-    }
-
-    if lower.contains("<link") && lower.contains("stylesheet") {
-        push_design(
-            "warning",
-            "external_stylesheet",
-            "source references an external stylesheet",
-            "Inline the required styles onto the elements/cells that need them; most email clients strip or rewrite external CSS.",
-        );
-    }
-
-    if lower.contains("<style") || lower.contains("@import") {
-        push_design(
-            "warning",
-            "style_block",
-            "source relies on a style block or CSS import",
-            "For production sends, move critical styles inline. Gmail and other clients can drop or rewrite head CSS.",
-        );
-    }
-
-    if lower.contains("display:flex")
-        || lower.contains("display: flex")
-        || lower.contains("display:grid")
-        || lower.contains("display: grid")
-    {
-        push_design(
-            "warning",
-            "browser_layout_css",
-            "source uses browser layout CSS such as flex or grid",
-            "Rebuild complex rows/columns with presentation tables and inline cell padding for email-client compatibility.",
-        );
-    }
-
-    if html_source.len() > 1_500 && !lower.contains("<table") {
-        push_design(
-            "warning",
-            "no_table_layout",
-            "rich template has no table-based layout",
-            "For designed newsletters, use a 100% outer presentation table and a centered 600-640px inner table.",
-        );
-    }
-
-    if lower.contains("class=") && !lower.contains("style=") {
-        push_design(
-            "warning",
-            "class_styles_without_inline_styles",
-            "source appears class-driven rather than inline-styled",
-            "Classes alone are fragile in email. Keep important visual styles inline even if classes remain for tooling.",
-        );
-    }
-
-    let design_errors = design_findings
+    let design = template::design_findings(html_source, source_label);
+    let design_errors = template::count_severity(&design, DesignSeverity::Error);
+    let design_warnings = template::count_severity(&design, DesignSeverity::Warning);
+    let design_findings: Vec<Value> = design
         .iter()
-        .filter(|f| f.get("severity").and_then(|v| v.as_str()) == Some("error"))
-        .count();
-    let design_warnings = design_findings
-        .iter()
-        .filter(|f| f.get("severity").and_then(|v| v.as_str()) == Some("warning"))
-        .count();
+        .map(|f| {
+            json!({
+                "severity": match f.severity { DesignSeverity::Error => "error", DesignSeverity::Warning => "warning" },
+                "code": f.code,
+                "message": f.message,
+                "hint": f.hint,
+            })
+        })
+        .collect();
 
     let conversion_required = design_errors > 0;
     let ready_to_send = !conversion_required && rendered.error_count() == 0;

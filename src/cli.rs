@@ -366,6 +366,13 @@ pub struct TemplateCreateArgs {
     /// Import HTML body from this file path. If omitted, a built-in scaffold is used.
     #[arg(long = "from-file")]
     pub from_file: Option<std::path::PathBuf>,
+    /// Skip the v0.4.5 design + lint gate. Without this flag, `template create
+    /// --from-file` refuses to import a source whose verdict is
+    /// `browser_prototype_needs_conversion` or whose lint reports any errors.
+    /// Use `--force` only when you have a deliberate reason to store a
+    /// half-finished or unconventional template (e.g. for incremental editing).
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -500,6 +507,12 @@ pub struct BroadcastSendArgs {
     /// or modify any broadcast state. Exit 0 with the projected counts.
     #[arg(long)]
     pub dry_run: bool,
+    /// Skip the v0.4.5 design-error preflight check. Without this flag,
+    /// `broadcast send` refuses to send when the template carries
+    /// error-level design findings (browser/JSX source, embedded scripts).
+    /// Use only when you have manually verified the template renders cleanly.
+    #[arg(long = "allow-design-errors")]
+    pub allow_design_errors: bool,
 }
 
 #[derive(Args, Debug)]

@@ -485,7 +485,9 @@ fn strip_inline_tags_to_text(html: &str) -> String {
 ///
 /// Called by `render_inner` before substitution + lint scan. The raw source
 /// in the database is unchanged; this is a render-time transform only.
-fn strip_html_comments(source: &str) -> String {
+/// `pub(crate)` so the design-rule scanner in `template::design` can reuse it
+/// — author comments must not trip design checks any more than lint checks.
+pub(crate) fn strip_html_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut i = 0;
     let bytes = source.as_bytes();

@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.4.4 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.4_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.4.5 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.5_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -47,31 +47,29 @@ The existing options for an agent are bad:
 
 ## Status
 
-> **v0.4.4 — clear agent instructions plus the production send hardening.**
+> **v0.4.5 — design-gate enforcement on top of v0.4.4.**
 >
-> `broadcast send` now requires explicit `--confirm`, sends in resumable chunks
-> of 100 through `email-cli batch send`, emits RFC 8058 one-click unsubscribe
-> headers, keeps body unsubscribe links out of UTM rewriting, and preserves CTA
-> and unsubscribe destinations in the plain-text MIME alternative as
-> `Label (URL)`.
+> `template create --from-file` now refuses browser/React/JSX handoffs and
+> lint-error sources by default. The verdict comes from `template inspect`,
+> which used to be advisory only. Override with `--force` for deliberate
+> incremental editing.
 >
-> Tracking is integrated via `event poll`, which asks `email-cli email list`
-> for recent Resend state and mirrors delivery/click/bounce events into local
-> SQLite for `report show`, `report links`, `report engagement`, and
-> `report deliverability`.
+> `broadcast send` re-runs the same design check at preflight and refuses
+> error-level findings (`browser_or_jsx_source`, `browser_script_dependency`)
+> before a single email-cli call. Override with `--allow-design-errors` or
+> set `[guards].block_design_errors = false` in `config.toml`.
 >
-> Release automation is live: pushing a `vX.Y.Z` tag runs verification,
-> publishes crates.io, updates the Homebrew tap, and creates the GitHub release.
-> See [docs/release.md](./docs/release.md).
+> The JSX heuristic now catches modern frameworks without an explicit React
+> import (Next 13+, Vite, `export default function`, `<Capitalized` component
+> tags) so the gate fires on the handoffs people are actually shipping in
+> 2026, not just `import React from 'react'`.
 >
-> `mailing-list-cli skill install` writes the bundled agent skill to Codex,
-> Claude, Gemini, and `.agents` skill roots. Use `mailing-list-cli skill status`
-> to check whether installed copies match the binary.
->
-> The embedded skill and `agent-info` include explicit email design rules:
-> table-based layout, visible margins, inline link styling, plain-text review,
-> and preview-before-send. This is intentionally part of the CLI contract so an
-> agent does not need separate design docs to avoid browser-style email output.
+> Everything else from v0.4.4 still applies: `--confirm`-gated sends,
+> resumable batch chunks of 100, RFC 8058 one-click unsubscribe headers,
+> body unsubscribe links opt out of UTM rewriting, plain-text alternatives
+> preserve anchor URLs as `Label (URL)`, integrated `event poll` tracking,
+> bundled agent skill via `skill install`, and the explicit email design
+> rules in `agent-info` and the embedded skill.
 
 ## Planned Commands
 
@@ -103,7 +101,7 @@ Filter expressions are a JSON AST (v0.2 dropped the string DSL — agents emit J
 
 | Command | What it does |
 |---|---|
-| `template create <name> --subject "..." [--from-file <path>]` | Create a plain-HTML template (or scaffold) |
+| `template create <name> --subject "..." [--from-file <path>] [--force]` | Create a plain-HTML template (or scaffold). `--from-file` enforces the design + lint gate; `--force` overrides for deliberate non-final imports |
 | `template ls` | List local templates |
 | `template show <name>` | Print the raw HTML source |
 | `template render <name> --with-data <file>` | Render to a JSON envelope; sendable HTML is in `.data.html` |
@@ -128,6 +126,17 @@ missing compliance placeholders. A `browser_prototype_needs_conversion` verdict
 means the file is design direction only; convert it into standalone static
 email HTML before `template create` or any broadcast send.
 
+v0.4.5 enforces the same check at the import boundary and at the send
+boundary. `template create --from-file` refuses imports whose verdict is
+`browser_prototype_needs_conversion` or whose lint reports any errors
+(error codes `template_create_design_blocked` / `template_create_lint_blocked`,
+override with `--force`). `broadcast send` re-runs the design scanner at
+preflight and refuses error-level findings (error code
+`template_has_design_errors`, override with `--allow-design-errors`). The two
+override flags exist because capable agents may have a deliberate reason to
+land a half-finished template or to ship something that the heuristic misclassifies;
+they are not for routine use.
+
 ### Broadcasts (Campaigns)
 
 | Command | What it does |
@@ -135,8 +144,8 @@ email HTML before `template create` or any broadcast send.
 | `broadcast create --template <name> --to <segment>` | Stage a broadcast |
 | `broadcast preview <id> --to <email>` | Send a single test |
 | `broadcast schedule <id> --at <time>` | Schedule for later |
-| `broadcast send <id> --dry-run` | Project recipient counts and preflight checks without sending |
-| `broadcast send <id> --confirm` | Send now, after explicit approval |
+| `broadcast send <id> --dry-run [--allow-design-errors]` | Project recipient counts and preflight checks without sending |
+| `broadcast send <id> --confirm [--force-unlock] [--allow-design-errors]` | Send now, after explicit approval |
 | `broadcast cancel <id>` | Cancel a scheduled broadcast |
 | `broadcast ab <id> --vary subject --variants 2 --winner-by opens` | Configure A/B test |
 | `broadcast ls` | Recent broadcasts and their statuses |

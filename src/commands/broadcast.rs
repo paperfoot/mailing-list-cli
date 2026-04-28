@@ -133,7 +133,7 @@ fn schedule(format: Format, args: BroadcastScheduleArgs) -> Result<(), AppError>
 
 fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
     if args.dry_run {
-        let result = pipeline::dry_run_broadcast(args.id)?;
+        let result = pipeline::dry_run_broadcast(args.id, args.allow_design_errors)?;
         output::success(
             format,
             &format!(
@@ -144,7 +144,8 @@ fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
                 "broadcast_id": result.broadcast_id,
                 "would_send": result.sent_count,
                 "suppressed": result.suppressed_count,
-                "dry_run": true
+                "dry_run": true,
+                "allow_design_errors": args.allow_design_errors,
             }),
         );
         return Ok(());
@@ -161,7 +162,7 @@ fn send(format: Format, args: BroadcastSendArgs) -> Result<(), AppError> {
         });
     }
 
-    let result = pipeline::send_broadcast(args.id, args.force_unlock)?;
+    let result = pipeline::send_broadcast(args.id, args.force_unlock, args.allow_design_errors)?;
     let data = json!({
         "broadcast_id": result.broadcast_id,
         "sent": result.sent_count,

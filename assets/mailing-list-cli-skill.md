@@ -7,9 +7,17 @@ description: "Use when user asks to manage mailing lists, send newsletters, mana
 
 Built on top of `email-cli`. Requires `email-cli >= 0.6.0` on PATH.
 
-Current stable: `mailing-list-cli v0.4.4`.
+Current stable: `mailing-list-cli v0.4.5`.
 
 Run `mailing-list-cli agent-info` for the source-of-truth capability manifest.
+
+v0.4.5 enforces what v0.4.4 only advised: `template create --from-file` refuses
+browser/JSX handoffs and lint-error sources by default (`--force` overrides),
+and `broadcast send` runs a second design-rule preflight before any wire call
+(refuses error-level design findings unless `--allow-design-errors` is passed
+or `[guards].block_design_errors = false`). Capable agents can still convert
+browser prototypes themselves and import the result; the gate just prevents an
+unconverted JSX blob from sliding through unchallenged.
 
 ## Core Workflows
 
@@ -44,6 +52,7 @@ mailing-list-cli contact set user@example.com company "Acme Inc"
 
 ```bash
 mailing-list-cli template create "weekly-update" --from-file template.html
+mailing-list-cli template create "draft" --from-file half_done.html --force  # Bypass design+lint gate
 mailing-list-cli template inspect --from-file template.html # Handoff/readiness check
 mailing-list-cli template inspect "weekly-update"           # Stored-template check
 mailing-list-cli template lint "weekly-update"              # 6 lint rules
@@ -51,6 +60,12 @@ mailing-list-cli template preview "weekly-update" --open    # Render + open in b
 mailing-list-cli template render "weekly-update" --with-data vars.json | jq -e '.status == "success" and .data.lint_errors == 0' >/dev/null
 mailing-list-cli template render "weekly-update" --with-data vars.json | jq -r '.data.html'
 ```
+
+v0.4.5: `template create --from-file` will reject a source whose verdict is
+`browser_prototype_needs_conversion` or whose lint reports any errors. The
+error code is `template_create_design_blocked` (or `template_create_lint_blocked`).
+Pass `--force` only when you have a deliberate reason to store a non-final
+template (e.g. for incremental editing).
 
 `template render` emits the full CLI JSON envelope, not raw HTML. Do not pass
 its whole stdout to `email-cli --html`; use `template preview` for rendered
@@ -130,9 +145,16 @@ mailing-list-cli broadcast preview <id> --to test@example.com
 
 # 3. Schedule or send
 mailing-list-cli broadcast schedule <id> --at "2026-04-15T09:00:00Z"
-mailing-list-cli broadcast send <id> --dry-run              # Projected counts only
-mailing-list-cli broadcast send <id> --confirm              # Send now (resumable, locked)
+mailing-list-cli broadcast send <id> --dry-run                            # Projected counts only
+mailing-list-cli broadcast send <id> --confirm                            # Send now (resumable, locked)
+mailing-list-cli broadcast send <id> --confirm --allow-design-errors      # Override design-error preflight
 ```
+
+v0.4.5: `broadcast send` (and `--dry-run`) run the design-rule scanner against
+the stored template before any email-cli call. Error-level findings
+(`browser_or_jsx_source`, `browser_script_dependency`) abort with code 3 and
+error code `template_has_design_errors`. Override with `--allow-design-errors`
+or set `[guards].block_design_errors = false` in `config.toml`.
 
 ### Analytics & Reports
 
@@ -187,7 +209,7 @@ There are no `uv` or `bun` artifacts for this project.
 - **Atomic broadcast lock**: prevents double-send races; use `--force-unlock` only with `--confirm` when previous process is confirmed dead
 - **UTM auto-injection**: outbound `<a>` tags get utm_source/medium/campaign automatically unless the anchor has `data-utm="off"`
 - **Deliverability footer behavior**: sends include `List-Unsubscribe` and `List-Unsubscribe-Post` headers; generated unsubscribe body links opt out of UTM rewriting
-- **Design handoff gate**: `template inspect --from-file` detects browser/React/JSX handoffs, script/Babel dependencies, external CSS, style blocks, flex/grid layout, missing table layout, and missing compliance placeholders
+- **Design handoff gate (v0.4.5)**: `template create --from-file` and `broadcast send` both refuse browser/JSX/scripted templates by default. `template inspect --from-file` is still the advisory pre-import probe; the gate codes are `template_create_design_blocked` (create-time) and `template_has_design_errors` (send-time). Override with `--force` and `--allow-design-errors` respectively
 - **Template quality warnings**: `template lint` warns on unstyled text links and semantic layout tags that are fragile in email clients
 - **Plain-text URLs**: the text MIME alternative preserves anchor destinations as `Label (URL)`, including CTA and unsubscribe links
 - **Inbox placement is not guaranteed**: `health` verifies the Resend sender domain, but DNS policy, sender reputation, content, recipient engagement, and complaint rate are outside local SQLite state

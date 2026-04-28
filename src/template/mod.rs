@@ -21,9 +21,12 @@
 //!   - `render::render_preview()` — lenient (unresolved = warning). Called by
 //!     `template preview`, `template render`, and `template lint`.
 
+pub mod design;
 pub mod render;
 pub mod subst;
 
+#[allow(unused_imports)]
+pub use design::{DesignFinding, DesignSeverity, count_severity, design_findings};
 #[allow(unused_imports)]
 pub use render::{
     LintFinding, LintRule, RenderError, Rendered, Severity, lint, render, render_preview,

@@ -22,7 +22,7 @@ use crate::error::AppError;
 use crate::models::{Broadcast, Contact};
 use crate::segment::SegmentExpr;
 use crate::segment::compiler;
-use crate::template::{self, RenderError};
+use crate::template::{self, DesignSeverity, RenderError};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -53,7 +53,11 @@ pub struct PipelineResult {
 const CHUNK_SIZE: usize = 100;
 
 #[allow(dead_code)]
-pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, AppError> {
+pub fn send_broadcast(
+    id: i64,
+    force_unlock: bool,
+    allow_design_errors: bool,
+) -> Result<PipelineResult, AppError> {
     let config = Config::load()?;
     // v0.3: mut because the per-chunk transaction blocks need
     // &mut Connection for conn.transaction(). v0.3.1: also needed for
@@ -157,9 +161,11 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
     preflight_checks(
         &db,
         &config,
+        &template.name,
         &template.html_source,
         &template.subject,
         recipients.len(),
+        allow_design_errors,
     )?;
 
     // Resolve sender from config (validated by preflight already, but extract again).
@@ -609,7 +615,7 @@ pub fn send_broadcast(id: i64, force_unlock: bool) -> Result<PipelineResult, App
 /// Returns the projected counts so operators can see what a send will do
 /// before pulling the trigger.
 #[allow(dead_code)]
-pub fn dry_run_broadcast(id: i64) -> Result<PipelineResult, AppError> {
+pub fn dry_run_broadcast(id: i64, allow_design_errors: bool) -> Result<PipelineResult, AppError> {
     let config = Config::load()?;
     let db = Db::open()?;
 
@@ -634,9 +640,11 @@ pub fn dry_run_broadcast(id: i64) -> Result<PipelineResult, AppError> {
     preflight_checks(
         &db,
         &config,
+        &template.name,
         &template.html_source,
         &template.subject,
         recipients.len(),
+        allow_design_errors,
     )?;
 
     // Count suppressed.
@@ -829,9 +837,11 @@ const RATE_WINDOW_DAYS: i64 = 30;
 fn preflight_checks(
     db: &Db,
     config: &Config,
+    template_name: &str,
     html_source: &str,
     subject_source: &str,
     recipient_count: usize,
+    allow_design_errors: bool,
 ) -> Result<(), AppError> {
     // Invariant 1: physical address must be set
     let address_present = config
@@ -871,6 +881,35 @@ fn preflight_checks(
             message: format!("template has {} lint errors", outcome.error_count()),
             suggestion: "Run `template lint <name>` or `template preview <name> --open` to see and fix the issues".into(),
         });
+    }
+    // Invariant 2b (v0.4.5): refuse error-level design findings.
+    // `template create` already gates on the same check at import time, but a
+    // template stored before v0.4.5 (or with `--force`) can still be JSX-shaped
+    // and has only the lint pass between it and the wire. Design errors are
+    // limited to "browser/JSX source" and "embedded script" — both are
+    // unrecoverable at send time, not warnings.
+    let block_design = config.guards.block_design_errors && !allow_design_errors;
+    if block_design {
+        let label = format!("template:{template_name}");
+        let design = template::design_findings(html_source, &label);
+        let design_errors = template::count_severity(&design, DesignSeverity::Error);
+        if design_errors > 0 {
+            let codes: Vec<&str> = design
+                .iter()
+                .filter(|f| f.severity == DesignSeverity::Error)
+                .map(|f| f.code)
+                .collect();
+            return Err(AppError::BadInput {
+                code: "template_has_design_errors".into(),
+                message: format!(
+                    "template '{template_name}' carries {design_errors} error-level design finding(s): {}. This shape will not render as email.",
+                    codes.join(", ")
+                ),
+                suggestion: format!(
+                    "Convert the template into static table-based email HTML, or rerun with `--allow-design-errors` if you have manually verified the rendered output. Run `template inspect {template_name}` to see the full assessment."
+                ),
+            });
+        }
     }
     // Invariant 3: recipient count cap
     let cap = config.guards.max_recipients_per_send;

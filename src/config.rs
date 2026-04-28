@@ -79,6 +79,12 @@ pub struct GuardsConfig {
     pub max_bounce_rate: f64,
     #[serde(default = "default_max_recipients_per_send")]
     pub max_recipients_per_send: usize,
+    /// v0.4.5: refuse to send when the template carries error-level design
+    /// findings (browser/JSX source, embedded scripts). Defaults to true so
+    /// existing JSX-shaped templates already in the DB cannot ship without an
+    /// explicit operator override (`--allow-design-errors`).
+    #[serde(default = "default_block_design_errors")]
+    pub block_design_errors: bool,
 }
 
 impl Default for GuardsConfig {
@@ -87,6 +93,7 @@ impl Default for GuardsConfig {
             max_complaint_rate: default_max_complaint_rate(),
             max_bounce_rate: default_max_bounce_rate(),
             max_recipients_per_send: default_max_recipients_per_send(),
+            block_design_errors: default_block_design_errors(),
         }
     }
 }
@@ -99,6 +106,9 @@ fn default_max_bounce_rate() -> f64 {
 }
 fn default_max_recipients_per_send() -> usize {
     50_000
+}
+fn default_block_design_errors() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

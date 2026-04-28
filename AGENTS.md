@@ -7,7 +7,7 @@ them without an MCP server, schema file, or browser dashboard.
 
 ## Current state
 
-- **Version**: v0.4.3 (embedded skill installer on top of v0.4.2)
+- **Version**: v0.4.4 (agent instruction polish on top of v0.4.3)
 - **Research**: see [/research](./research) for the five dossiers that informed the original design
 - **Recent plans**:
   - [v0.2 rearchitecture](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md) (shipped as v0.2.0)
@@ -17,6 +17,7 @@ them without an MCP server, schema file, or browser dashboard.
   - v0.4.1 patch: explicit broadcast approval, safer template-render guidance, click payload passthrough, release automation
   - v0.4.2 patch: unsubscribe body links opt out of UTM rewriting, plain-text alternatives preserve anchor URLs
   - v0.4.3 patch: `skill install` / `skill status` install the embedded Codex/Claude/Gemini skill
+  - v0.4.4 patch: embedded skill and `agent-info` include explicit email design rules plus `template inspect` for browser/design handoffs
 
 ## Production hardening (v0.3.x)
 
@@ -36,6 +37,8 @@ What "production-grade" means in this codebase:
 - **Deliverability footer behavior**: the send pipeline emits `List-Unsubscribe` and `List-Unsubscribe-Post` headers, and the body unsubscribe anchor is rendered with inline styling plus `data-utm="off"` so tracking parameters are not added to compliance links. The plain-text MIME alternative preserves anchor destinations as `Label (URL)` instead of dropping URLs.
 - **Template quality warnings**: `template lint` warns on unstyled `<a href>` links and fragile semantic layout tags such as `<main>`, because Gmail and other clients do not behave like full browsers.
 - **Skill distribution**: `mailing-list-cli skill install` writes the embedded `mailing-list-cli` skill to Codex, Claude, Gemini, and `.agents` skill roots. `MLC_SKILL_ROOTS` can override the install roots for tests or custom setups.
+- **Agent-facing design guidance**: `agent-info.template_design_rules` and the embedded skill tell agents to use table wrappers, visible margins, inline link styles, restrained typography, plain-text inspection, and broadcast preview before real sends.
+- **Design handoff inspection**: run `template inspect --from-file <path>` on browser/React/JSX/design-canvas handoffs before `template create`. A `browser_prototype_needs_conversion` verdict means the file is design direction only; convert it into standalone table-based inline HTML before linting, previewing, or sending.
 
 ## Conventions
 
@@ -51,6 +54,7 @@ This project follows the [agent-cli-framework](https://github.com/paperfoot/agen
 - **Integrated preview.** `template preview <name>` writes rendered HTML to disk and optionally opens it in the default browser. This is the core iteration primitive — it replaces every "catch the mistake upfront" safety net the v0.1 system had.
 - **Release automation.** Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, verifies the tag matches `Cargo.toml`, publishes crates.io, updates the Homebrew tap, and creates/updates a GitHub release. Required repo secrets are listed in `docs/release.md`.
 - **Template render is not send-ready stdout.** `template render <name>` emits the full JSON envelope. If you need the rendered HTML for custom tooling, extract `.data.html` after checking `status == "success"` and `data.lint_errors == 0`; never pass the whole stdout to `email-cli --html`. Prefer `broadcast preview <id> --to <email>` for inbox tests because it runs the same strict render/compliance path as a real send.
+- **Template inspect is the handoff gate.** `template inspect <name>` or `template inspect --from-file <path>` classifies HTML/JSX/browser prototypes as `email_ready`, `email_candidate_with_warnings`, `not_send_ready`, or `browser_prototype_needs_conversion`, and returns concrete conversion steps for agents.
 
 ## Discovery
 

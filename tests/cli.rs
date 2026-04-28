@@ -1852,6 +1852,76 @@ fn template_lint_missing_unsubscribe_errors() {
 }
 
 #[test]
+fn template_inspect_file_flags_browser_prototype() {
+    let (tmp, config_path, db_path) = stub_env();
+    let proto_path = tmp.path().join("email-a-briefing.jsx");
+    std::fs::write(
+        &proto_path,
+        r#"import React from 'react';
+export function EmailPreview() {
+  return <main><section><a href="https://example.com">Read</a></section></main>;
+}
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "inspect",
+            "--from-file",
+            proto_path.to_str().unwrap(),
+        ]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["verdict"], "browser_prototype_needs_conversion");
+    assert_eq!(v["data"]["ready_to_send"], false);
+    assert!(
+        v["data"]["design_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "browser_or_jsx_source"),
+        "findings: {}",
+        v["data"]["design_findings"]
+    );
+}
+
+#[test]
+fn template_inspect_stored_template_reports_candidate() {
+    let (tmp, config_path, db_path) = stub_env();
+    let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args([
+            "--json",
+            "template",
+            "create",
+            "welcome",
+            "--subject",
+            "Welcome",
+            "--from-file",
+            template_path.to_str().unwrap(),
+        ]);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mailing-list-cli").unwrap();
+    cmd.env("MLC_CONFIG_PATH", &config_path)
+        .env("MLC_DB_PATH", &db_path)
+        .args(["--json", "template", "inspect", "welcome"]);
+    let out = cmd.assert().success();
+    let v: Value =
+        serde_json::from_str(&String::from_utf8(out.get_output().stdout.clone()).unwrap()).unwrap();
+    assert_eq!(v["data"]["lint_errors"], 0);
+    assert_eq!(v["data"]["conversion_required"], false);
+}
+
+#[test]
 fn template_rm_without_confirm_fails() {
     let (tmp, config_path, db_path) = stub_env();
     let template_path = write_template_file(&tmp, "welcome", VALID_TEMPLATE);
@@ -1889,6 +1959,7 @@ fn agent_info_lists_phase_4_commands() {
     for key in [
         "template create <name> [--subject <text>] [--from-file <path>]",
         "template render <name> [--with-data <file.json>] [--raw]",
+        "template inspect <name> | template inspect --from-file <path> [--subject <text>]",
         "template lint <name>",
     ] {
         assert!(commands.contains_key(key), "agent-info missing {key}");

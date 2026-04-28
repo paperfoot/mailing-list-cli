@@ -7,7 +7,7 @@ description: "Use when user asks to manage mailing lists, send newsletters, mana
 
 Built on top of `email-cli`. Requires `email-cli >= 0.6.0` on PATH.
 
-Current stable: `mailing-list-cli v0.4.3`.
+Current stable: `mailing-list-cli v0.4.4`.
 
 Run `mailing-list-cli agent-info` for the source-of-truth capability manifest.
 
@@ -44,6 +44,8 @@ mailing-list-cli contact set user@example.com company "Acme Inc"
 
 ```bash
 mailing-list-cli template create "weekly-update" --from-file template.html
+mailing-list-cli template inspect --from-file template.html # Handoff/readiness check
+mailing-list-cli template inspect "weekly-update"           # Stored-template check
 mailing-list-cli template lint "weekly-update"              # 6 lint rules
 mailing-list-cli template preview "weekly-update" --open    # Render + open in browser
 mailing-list-cli template render "weekly-update" --with-data vars.json | jq -e '.status == "success" and .data.lint_errors == 0' >/dev/null
@@ -60,6 +62,62 @@ not rewritten; generated unsubscribe body links already include this attribute.
 
 `template lint` warns on unstyled `<a href>` links and fragile semantic layout
 tags such as `<main>`, because email clients do not behave like full browsers.
+
+`template inspect` / `template info` is the handoff gate. Use it before
+importing browser prototypes, JSX/React files, canvas exports, or full webpage
+HTML. It returns a structured verdict:
+
+- `email_ready`: can move into lint/preview/broadcast preview.
+- `email_candidate_with_warnings`: sendable only after a deliberate warning
+  review.
+- `not_send_ready`: fix compliance/lint errors first.
+- `browser_prototype_needs_conversion`: do not import or send directly.
+  Convert the design direction into standalone static email HTML first.
+
+## Email Design Rules For Agents
+
+Treat email as a constrained client-rendering target, not a website. Before
+writing a template, follow these rules:
+
+- Use table-based outer layout with a full-width background table, a centered
+  inner table, and visible outer padding. Do not rely on `<main>`, flexbox,
+  CSS grid, external stylesheets, or browser defaults.
+- Keep the content column between 600 and 640 px wide. Use inline padding on
+  table cells so Gmail does not render text against the edge.
+- Inline every style. In particular, every `<a href>` needs a `style`
+  attribute; otherwise Gmail will render default blue/purple links.
+- Use restrained typography: 14-16 px body text, line-height around 1.5-1.65,
+  clear paragraph margins, and a small footer. Avoid oversized landing-page
+  hero layouts inside email.
+- Keep the palette simple but intentional: one body background, one content
+  surface, dark readable text, and one CTA color. Do not use decorative
+  gradients or image-dependent layouts.
+- Keep CTA buttons as inline-block anchors with explicit background, color,
+  padding, border radius, font weight, and no text decoration.
+- Keep unsubscribe and physical address visible, small, and styled. Do not
+  hide, shrink to unreadable size, or add tracking params to unsubscribe links.
+- Write a useful plain-text fallback by making the HTML link text meaningful;
+  the renderer will preserve destinations as `Label (URL)`.
+- Avoid spammy test language in real inbox tests. Use normal subject lines and
+  copy that looks like a real newsletter, not a pipeline diagnostic.
+- Before any real send: run `template lint`, inspect `template preview` output
+  including `plain.txt`, then run `broadcast preview` to an internal address.
+  Resolve lint warnings unless there is a deliberate reason not to.
+
+If a previous inbox test looked edge-to-edge, had blue links, or had missing
+text URLs, rewrite the template around the scaffold pattern before sending
+again.
+
+For a design handoff:
+
+1. Run `mailing-list-cli template inspect --from-file <handoff-file>`.
+2. If it is a browser prototype, extract the design intent and rewrite as
+   static table-based inline HTML; do not pass React/JSX/browser output through
+   directly.
+3. Run `template inspect --from-file converted.html` and only continue when it
+   is `email_ready` or warnings are explicitly acceptable.
+4. Create, lint, preview HTML/plain text, send a broadcast preview, dry-run,
+   then send with `--confirm`.
 
 ### Broadcasts (Campaigns)
 
@@ -129,6 +187,7 @@ There are no `uv` or `bun` artifacts for this project.
 - **Atomic broadcast lock**: prevents double-send races; use `--force-unlock` only with `--confirm` when previous process is confirmed dead
 - **UTM auto-injection**: outbound `<a>` tags get utm_source/medium/campaign automatically unless the anchor has `data-utm="off"`
 - **Deliverability footer behavior**: sends include `List-Unsubscribe` and `List-Unsubscribe-Post` headers; generated unsubscribe body links opt out of UTM rewriting
+- **Design handoff gate**: `template inspect --from-file` detects browser/React/JSX handoffs, script/Babel dependencies, external CSS, style blocks, flex/grid layout, missing table layout, and missing compliance placeholders
 - **Template quality warnings**: `template lint` warns on unstyled text links and semantic layout tags that are fragile in email clients
 - **Plain-text URLs**: the text MIME alternative preserves anchor destinations as `Label (URL)`, including CTA and unsubscribe links
 - **Inbox placement is not guaranteed**: `health` verifies the Resend sender domain, but DNS policy, sender reputation, content, recipient engagement, and complaint rate are outside local SQLite state

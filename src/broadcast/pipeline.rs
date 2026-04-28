@@ -670,11 +670,6 @@ pub fn dry_run_broadcast(id: i64) -> Result<PipelineResult, AppError> {
         })?;
     }
 
-    eprintln!(
-        "dry run: broadcast {id} would send to {would_send} recipients ({suppressed_count} suppressed, {} total in target)",
-        recipients.len()
-    );
-
     Ok(PipelineResult {
         broadcast_id: id,
         sent_count: would_send,

@@ -16,7 +16,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Status: v0.4.3 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.3_email--cli_v0.6-orange?style=for-the-badge)](#status)
+[![Status: v0.4.4 email-cli v0.6](https://img.shields.io/badge/Status-v0.4.4_email--cli_v0.6-orange?style=for-the-badge)](#status)
 [![Built on Resend](https://img.shields.io/badge/Built_on-Resend-000000?style=for-the-badge)](https://resend.com)
 
 ---
@@ -47,7 +47,7 @@ The existing options for an agent are bad:
 
 ## Status
 
-> **v0.4.3 — embedded skill installer plus the production send hardening.**
+> **v0.4.4 — clear agent instructions plus the production send hardening.**
 >
 > `broadcast send` now requires explicit `--confirm`, sends in resumable chunks
 > of 100 through `email-cli batch send`, emits RFC 8058 one-click unsubscribe
@@ -67,6 +67,11 @@ The existing options for an agent are bad:
 > `mailing-list-cli skill install` writes the bundled agent skill to Codex,
 > Claude, Gemini, and `.agents` skill roots. Use `mailing-list-cli skill status`
 > to check whether installed copies match the binary.
+>
+> The embedded skill and `agent-info` include explicit email design rules:
+> table-based layout, visible margins, inline link styling, plain-text review,
+> and preview-before-send. This is intentionally part of the CLI contract so an
+> agent does not need separate design docs to avoid browser-style email output.
 
 ## Planned Commands
 
@@ -103,6 +108,7 @@ Filter expressions are a JSON AST (v0.2 dropped the string DSL — agents emit J
 | `template show <name>` | Print the raw HTML source |
 | `template render <name> --with-data <file>` | Render to a JSON envelope; sendable HTML is in `.data.html` |
 | `template preview <name> --with-data <file> [--out-dir <path>] [--open]` | Write preview to disk and optionally open in the browser |
+| `template inspect <name>` / `template inspect --from-file <path>` | Classify stored templates or design handoff files as email-ready, lint-fixable, or browser/React prototypes that need conversion |
 | `template lint <name>` | 6-rule compliance check (CAN-SPAM + size + XSS allowlist + forbidden tags) |
 
 Templates are plain HTML with `{{ var }}` merge tags and `{{#if }}` conditionals. Triple-brace `{{{ name }}}` is an allowlisted XSS-safe escape hatch, reserved for `unsubscribe_link` and `physical_address_footer` only. The send pipeline hard-fails on any unresolved placeholder before a single email goes out.
@@ -114,6 +120,13 @@ Rendered plain-text alternatives preserve links as `Label (URL)`. Generated unsu
 `template lint` warns on fragile semantic layout tags such as `<main>` and on
 unstyled text links, because email clients may collapse browser-style layout
 and fall back to default blue/purple hyperlinks.
+
+For designer handoffs and browser prototypes, run `template inspect --from-file
+<path>` before importing. It detects React/JSX/Babel/script dependencies,
+external CSS, style blocks, flex/grid layout, missing table structure, and
+missing compliance placeholders. A `browser_prototype_needs_conversion` verdict
+means the file is design direction only; convert it into standalone static
+email HTML before `template create` or any broadcast send.
 
 ### Broadcasts (Campaigns)
 

@@ -1,6 +1,6 @@
 use crate::cli::{
-    TemplateAction, TemplateCreateArgs, TemplateLintArgs, TemplatePreviewArgs, TemplateRenderArgs,
-    TemplateRmArgs, TemplateShowArgs,
+    TemplateAction, TemplateCreateArgs, TemplateInspectArgs, TemplateLintArgs, TemplatePreviewArgs,
+    TemplateRenderArgs, TemplateRmArgs, TemplateShowArgs,
 };
 use crate::db::Db;
 use crate::error::AppError;
@@ -52,6 +52,23 @@ const SCAFFOLD: &str = r##"<!--
     4. no `<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>` tags
     5. no triple-brace used outside the two allowlist names
     6. structural sanity (subject non-empty, etc.)
+
+  Email design rules for agents:
+    - If you are starting from a design handoff, React/JSX file, canvas export,
+      or webpage prototype, run `template inspect --from-file <path>` first.
+      A `browser_prototype_needs_conversion` verdict means it is design
+      direction only; convert it before `template create`.
+    - Build email like email, not like a webpage. Use table-based wrappers,
+      centered content, inline cell padding, and inline styles.
+    - Keep the content width around 600-640 px with visible outer padding.
+    - Style every text link inline. Unstyled links turn default blue/purple in
+      Gmail and look unfinished.
+    - Avoid semantic layout tags such as <main>, <section>, <article>,
+      <header>, and <footer>; they are browser-oriented and fragile in email.
+    - Use restrained type, clear paragraph spacing, a single obvious CTA, and
+      a readable compliance footer.
+    - Before a real send, run template lint, inspect template preview output
+      including plain.txt, then send broadcast preview to an internal address.
 
   Delete this comment once you're done reading it — the final sent email
   carries whatever is in the source.
@@ -123,6 +140,7 @@ pub fn run(format: Format, action: TemplateAction) -> Result<(), AppError> {
         TemplateAction::Show(args) => show(format, args),
         TemplateAction::Render(args) => render(format, args),
         TemplateAction::Preview(args) => preview(format, args),
+        TemplateAction::Inspect(args) => inspect(format, args),
         TemplateAction::Lint(args) => lint_cmd(format, args),
         TemplateAction::Rm(args) => remove(format, args),
     }
@@ -148,7 +166,8 @@ fn create(format: Format, args: TemplateCreateArgs) -> Result<(), AppError> {
             "name": args.name,
             "subject": subject,
             "size_bytes": source.len(),
-            "scaffolded": args.from_file.is_none()
+            "scaffolded": args.from_file.is_none(),
+            "design_assessment": inspect_template_source("created_template", &source, subject)
         }),
     );
     Ok(())
@@ -200,6 +219,225 @@ fn show(format: Format, args: TemplateShowArgs) -> Result<(), AppError> {
         }),
     );
     Ok(())
+}
+
+fn inspect(format: Format, args: TemplateInspectArgs) -> Result<(), AppError> {
+    if args.name.is_some() && args.from_file.is_some() {
+        return Err(AppError::BadInput {
+            code: "template_inspect_ambiguous_source".into(),
+            message: "inspect accepts either a stored template name or --from-file, not both".into(),
+            suggestion: "Use `mailing-list-cli template inspect <name>` or `mailing-list-cli template inspect --from-file design.html`".into(),
+        });
+    }
+
+    let (source_label, subject, source) = match (&args.name, &args.from_file) {
+        (Some(name), None) => {
+            let db = Db::open()?;
+            let t = db
+                .template_get_by_name(name)?
+                .ok_or_else(|| AppError::BadInput {
+                    code: "template_not_found".into(),
+                    message: format!("no template named '{name}'"),
+                    suggestion: "Run `mailing-list-cli template ls`".into(),
+                })?;
+            (format!("template:{name}"), t.subject, t.html_source)
+        }
+        (None, Some(path)) => {
+            let source = std::fs::read_to_string(path).map_err(|e| AppError::BadInput {
+                code: "template_file_read_failed".into(),
+                message: format!("could not read {}: {e}", path.display()),
+                suggestion: "Check the file path and permissions".into(),
+            })?;
+            let subject = args
+                .subject
+                .as_deref()
+                .unwrap_or("(inspection subject)")
+                .to_string();
+            (format!("file:{}", path.display()), subject, source)
+        }
+        (None, None) => {
+            return Err(AppError::BadInput {
+                code: "template_inspect_source_required".into(),
+                message: "inspect requires a stored template name or --from-file".into(),
+                suggestion: "Use `mailing-list-cli template inspect <name>` or `mailing-list-cli template inspect --from-file design.html`".into(),
+            });
+        }
+        (Some(_), Some(_)) => unreachable!(),
+    };
+
+    let assessment = inspect_template_source(&source_label, &source, &subject);
+    let verdict = assessment
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    output::success(
+        format,
+        &format!("template inspection: {verdict}"),
+        assessment,
+    );
+    Ok(())
+}
+
+fn inspect_template_source(source_label: &str, html_source: &str, subject: &str) -> Value {
+    let rendered = template::lint(html_source, subject);
+    let lower = html_source.to_ascii_lowercase();
+    let source_label_lower = source_label.to_ascii_lowercase();
+    let mut design_findings = Vec::new();
+
+    let mut push_design = |severity: &str, code: &str, message: &str, hint: &str| {
+        design_findings.push(json!({
+            "severity": severity,
+            "code": code,
+            "message": message,
+            "hint": hint
+        }));
+    };
+
+    let looks_like_js_source = source_label_lower.ends_with(".jsx")
+        || source_label_lower.ends_with(".tsx")
+        || source_label_lower.ends_with(".js")
+        || source_label_lower.ends_with(".ts")
+        || lower.contains("import react")
+        || lower.contains("from 'react'")
+        || lower.contains("from \"react\"")
+        || lower.contains("reactdom")
+        || lower.contains("createroot(");
+
+    if looks_like_js_source {
+        push_design(
+            "error",
+            "browser_or_jsx_source",
+            "source looks like a browser/React/JSX prototype, not send-ready email HTML",
+            "Extract the visual/content direction, then rewrite it as standalone table-based HTML with inline styles before `template create`.",
+        );
+    }
+
+    if lower.contains("<script")
+        || lower.contains("type=\"text/babel")
+        || lower.contains("type='text/babel")
+    {
+        push_design(
+            "error",
+            "browser_script_dependency",
+            "source depends on JavaScript or Babel",
+            "Email clients strip scripts. Remove JS entirely and express the final layout as static HTML tables with inline styles.",
+        );
+    }
+
+    if lower.contains("<link") && lower.contains("stylesheet") {
+        push_design(
+            "warning",
+            "external_stylesheet",
+            "source references an external stylesheet",
+            "Inline the required styles onto the elements/cells that need them; most email clients strip or rewrite external CSS.",
+        );
+    }
+
+    if lower.contains("<style") || lower.contains("@import") {
+        push_design(
+            "warning",
+            "style_block",
+            "source relies on a style block or CSS import",
+            "For production sends, move critical styles inline. Gmail and other clients can drop or rewrite head CSS.",
+        );
+    }
+
+    if lower.contains("display:flex")
+        || lower.contains("display: flex")
+        || lower.contains("display:grid")
+        || lower.contains("display: grid")
+    {
+        push_design(
+            "warning",
+            "browser_layout_css",
+            "source uses browser layout CSS such as flex or grid",
+            "Rebuild complex rows/columns with presentation tables and inline cell padding for email-client compatibility.",
+        );
+    }
+
+    if html_source.len() > 1_500 && !lower.contains("<table") {
+        push_design(
+            "warning",
+            "no_table_layout",
+            "rich template has no table-based layout",
+            "For designed newsletters, use a 100% outer presentation table and a centered 600-640px inner table.",
+        );
+    }
+
+    if lower.contains("class=") && !lower.contains("style=") {
+        push_design(
+            "warning",
+            "class_styles_without_inline_styles",
+            "source appears class-driven rather than inline-styled",
+            "Classes alone are fragile in email. Keep important visual styles inline even if classes remain for tooling.",
+        );
+    }
+
+    let design_errors = design_findings
+        .iter()
+        .filter(|f| f.get("severity").and_then(|v| v.as_str()) == Some("error"))
+        .count();
+    let design_warnings = design_findings
+        .iter()
+        .filter(|f| f.get("severity").and_then(|v| v.as_str()) == Some("warning"))
+        .count();
+
+    let conversion_required = design_errors > 0;
+    let ready_to_send = !conversion_required && rendered.error_count() == 0;
+    let verdict = if conversion_required {
+        "browser_prototype_needs_conversion"
+    } else if rendered.error_count() > 0 {
+        "not_send_ready"
+    } else if rendered.warning_count() + design_warnings > 0 {
+        "email_candidate_with_warnings"
+    } else {
+        "email_ready"
+    };
+
+    let recommended_next_steps = if conversion_required {
+        vec![
+            "Do not import/send this file directly.".to_string(),
+            "Convert the design into static email HTML: 100% outer table, centered 600-640px inner table, inline styles, styled links, and no scripts/imports.".to_string(),
+            "Add `{{{ unsubscribe_link }}}` and `{{{ physical_address_footer }}}` near the footer.".to_string(),
+            "Run `template inspect --from-file converted.html`, then `template create`, `template lint`, `template preview`, `broadcast preview`, `broadcast send --dry-run`, and only then `broadcast send --confirm`.".to_string(),
+        ]
+    } else if !ready_to_send {
+        vec![
+            "Fix lint errors before sending.".to_string(),
+            "Run `template lint` and inspect the returned findings.".to_string(),
+            "Preview the rendered HTML and plain-text fallback before broadcast preview or send."
+                .to_string(),
+        ]
+    } else {
+        vec![
+            "Run `template create --from-file` if this is not stored yet.".to_string(),
+            "Run `template lint`, inspect `template preview` output including plain.txt, then send `broadcast preview` to an internal address.".to_string(),
+            "Use `broadcast send --dry-run` before the required `broadcast send --confirm`.".to_string(),
+        ]
+    };
+
+    json!({
+        "source": source_label,
+        "subject": subject,
+        "verdict": verdict,
+        "ready_to_send": ready_to_send,
+        "conversion_required": conversion_required,
+        "size_bytes": html_source.len(),
+        "lint_errors": rendered.error_count(),
+        "lint_warnings": rendered.warning_count(),
+        "design_errors": design_errors,
+        "design_warnings": design_warnings,
+        "lint_findings": rendered.findings,
+        "design_findings": design_findings,
+        "recommended_next_steps": recommended_next_steps,
+        "email_design_contract": [
+            "standalone static HTML only; no JavaScript, React runtime, Babel, external CSS, iframe/form/object/embed",
+            "100% outer presentation table plus centered 600-640px inner table for designed newsletters",
+            "inline styles on layout cells, text, CTA anchors, and ordinary text links",
+            "visible unsubscribe and physical-address footer placeholders",
+            "plain-text fallback must keep CTA and unsubscribe URLs visible"
+        ]
+    })
 }
 
 fn load_merge_data(path: Option<&std::path::PathBuf>) -> Result<Value, AppError> {

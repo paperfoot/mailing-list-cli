@@ -714,6 +714,7 @@ fn unescape_entities(s: &str) -> String {
         .replace("&rdquo;", "”")
         .replace("&laquo;", "«")
         .replace("&raquo;", "»")
+        .replace("&sect;", "§")
         .replace("&copy;", "©")
         .replace("&reg;", "®")
         .replace("&trade;", "™")
@@ -722,6 +723,10 @@ fn unescape_entities(s: &str) -> String {
         .replace("&times;", "×")
         .replace("&divide;", "÷")
         .replace("&infin;", "∞")
+        .replace("&rarr;", "→")
+        .replace("&larr;", "←")
+        .replace("&uarr;", "↑")
+        .replace("&darr;", "↓")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
@@ -734,19 +739,37 @@ fn unescape_entities(s: &str) -> String {
 }
 
 fn collapse_whitespace(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut last_was_space = false;
-    let mut newline_run = 0;
-    for c in s.chars() {
-        if c == '\n' {
-            newline_run += 1;
-            if newline_run <= 2 {
-                out.push('\n');
+    let mut lines: Vec<String> = Vec::new();
+    let mut blank_pending = false;
+
+    for raw_line in s.lines() {
+        let line = collapse_inline_whitespace(raw_line);
+        if line.is_empty() {
+            if !lines.is_empty() {
+                blank_pending = true;
             }
-            last_was_space = false;
             continue;
         }
-        newline_run = 0;
+
+        if blank_pending && lines.last().map(|line| !line.is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        lines.push(line);
+        blank_pending = false;
+    }
+
+    while lines.last().map(|line| line.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    lines.join("\n")
+}
+
+fn collapse_inline_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_space = false;
+
+    for c in s.chars() {
         if c.is_whitespace() {
             if !last_was_space && !out.is_empty() {
                 out.push(' ');
@@ -757,6 +780,7 @@ fn collapse_whitespace(s: &str) -> String {
             last_was_space = false;
         }
     }
+
     out.trim().to_string()
 }
 
@@ -954,6 +978,26 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_collapses_table_indentation() {
+        let html = r#"
+<table role="presentation">
+  <tr>
+    <td>
+      <p>Sharpest Move</p>
+      <p><a href="https://paperfoot.com">Request Access &rarr;</a></p>
+    </td>
+  </tr>
+</table>
+"#;
+        let text = html_to_text(html);
+        assert_eq!(
+            text,
+            "Sharpest Move\n\nRequest Access → (https://paperfoot.com)"
+        );
+        assert!(!text.contains("\n \n"), "got noisy text: {text:?}");
+    }
+
+    #[test]
     fn subject_also_substitutes() {
         let r = render_preview(
             VALID,
@@ -975,6 +1019,7 @@ mod tests {
         assert!(text.contains("”"), "right double quote should decode");
         assert!(text.contains("•"), "bullet should decode");
         assert!(text.contains("…"), "ellipsis should decode");
+        assert!(html_to_text("<p>&sect; Field Note &rarr;</p>").contains("§ Field Note →"));
         assert!(
             !text.contains("&mdash;") && !text.contains("&copy;"),
             "literal entity text must not survive decoding"

@@ -345,6 +345,9 @@ pub enum TemplateAction {
     Render(TemplateRenderArgs),
     /// Write a rendered preview to disk for iteration (and optionally open in browser)
     Preview(TemplatePreviewArgs),
+    /// Inspect a stored template or source file for email-client readiness
+    #[command(visible_alias = "info")]
+    Inspect(TemplateInspectArgs),
     /// Run the lint rule set against a template
     Lint(TemplateLintArgs),
     /// Delete a template
@@ -398,6 +401,18 @@ pub struct TemplatePreviewArgs {
     /// Open the rendered HTML in the default browser (macOS `open`, Linux `xdg-open`, Windows `start`)
     #[arg(long)]
     pub open: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct TemplateInspectArgs {
+    /// Stored template name. Omit when using --from-file.
+    pub name: Option<String>,
+    /// Inspect a source file before importing it as a template.
+    #[arg(long = "from-file")]
+    pub from_file: Option<std::path::PathBuf>,
+    /// Subject to use when inspecting --from-file input.
+    #[arg(long)]
+    pub subject: Option<String>,
 }
 
 #[derive(Args, Debug)]

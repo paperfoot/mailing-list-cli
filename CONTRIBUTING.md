@@ -1,20 +1,14 @@
 # Contributing
 
-`mailing-list-cli` is in the spec phase. The fastest way to help right now is to shape what we build before any code lands.
+`mailing-list-cli` is a shipped Rust binary, published to crates.io and the `199-biotechnologies/homebrew-tap` Homebrew tap. Contributions to commands, tests, and docs are welcome.
 
-## Right now
-
-1. **Read [the research](./research/README.md)** — five dossiers covering modern newsletter platforms, marketing tools, Resend's API surface, deliverability and compliance at scale, and email template formats for AI agents.
-2. **Open a [Discussion](https://github.com/paperfoot/mailing-list-cli/discussions)** if you spot something missing, want a feature on the roadmap, or disagree with a direction call.
-3. **Comment on the [pinned roadmap issue](https://github.com/paperfoot/mailing-list-cli/issues)** if you want a specific command added or reshaped.
-
-## Once the binary ships
-
-Three steps:
+## How to contribute
 
 1. Fork, branch, code.
 2. Run `cargo test` and `cargo clippy` until both are green.
 3. Open a PR. Keep it focused — one feature or one fix per PR.
+
+For anything larger than a bug fix, open an [issue](https://github.com/paperfoot/mailing-list-cli/issues) first so the shape is agreed before you build. The [research dossiers](./research/README.md) explain why the tool is designed the way it is; the release process lives in [docs/release.md](./docs/release.md).
 
 ### Conventions
 
@@ -28,7 +22,7 @@ Three steps:
 ### Tests
 
 - Unit tests live next to the code.
-- Integration tests verify the public CLI surface end-to-end against a recorded Resend fixture.
+- Integration tests verify the public CLI surface end-to-end against a stub email-cli script (`tests/fixtures/stub-email-cli.sh`) — this crate has no Resend code of its own; every API call goes through email-cli.
 - A spec test ensures every command listed in `agent-info` is routable.
 
 ## Code of conduct

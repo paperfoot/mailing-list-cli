@@ -8,6 +8,7 @@ them without an MCP server, schema file, or browser dashboard.
 ## Current state
 
 - **Version**: v0.4.5 (design-gate enforcement on top of v0.4.4)
+- **Hosted unsubscribe companion**: [`web/`](./web) is SharpClap, a Next.js app on Vercel that serves the public `/u/<token>` unsubscribe page and the RFC 8058 one-click POST endpoint a local CLI cannot. `unsubscribe sync` mirrors its recorded opt-outs into local SQLite suppression (`--endpoint`, `--api-key-env`, `--after`, `--limit`, `--max-pages`, `--dry-run`). Token secret: `MLC_UNSUBSCRIBE_SECRET`; sync key read from `MLC_UNSUBSCRIBE_SYNC_KEY`, falling back to `SYNC_API_KEY`. See [web/README.md](./web/README.md).
 - **Research**: see [/research](./research) for the five dossiers that informed the original design
 - **Recent plans**:
   - [v0.2 rearchitecture](./docs/plans/2026-04-08-phase-7-v0.2-rearchitecture.md) (shipped as v0.2.0)
@@ -19,6 +20,7 @@ them without an MCP server, schema file, or browser dashboard.
   - v0.4.3 patch: `skill install` / `skill status` install the embedded Codex/Claude/Gemini skill
   - v0.4.4 patch: embedded skill and `agent-info` include explicit email design rules plus `template inspect` for browser/design handoffs
   - v0.4.5 patch: `template create --from-file` and `broadcast send` preflight enforce the design + lint gate (override with `--force` / `--allow-design-errors`); JSX heuristic catches modern frameworks without an explicit React import; single design-rule scanner shared by inspect/create/send
+  - [v0.5 deliverability guard](./docs/plans/2026-07-19-v0.5-deliverability-guard.md) — planned, not shipped: send-ramp governor + bounce/complaint circuit breaker
 
 ## Production hardening (v0.3.x)
 
@@ -41,6 +43,7 @@ What "production-grade" means in this codebase:
 - **Agent-facing design guidance**: `agent-info.template_design_rules` and the embedded skill tell agents to use table wrappers, visible margins, inline link styles, restrained typography, plain-text inspection, and broadcast preview before real sends.
 - **Design handoff inspection**: run `template inspect --from-file <path>` on browser/React/JSX/design-canvas handoffs before `template create`. A `browser_prototype_needs_conversion` verdict means the file is design direction only; convert it into standalone table-based inline HTML before linting, previewing, or sending.
 - **Design + lint gate (v0.4.5)**: `template create --from-file` refuses imports whose verdict is `browser_prototype_needs_conversion` or whose lint reports any errors — error codes `template_create_design_blocked` / `template_create_lint_blocked`, override with `--force`. `broadcast send` re-runs the design check at preflight and refuses error-level findings — error code `template_has_design_errors`, override with `--allow-design-errors` or set `[guards].block_design_errors = false` in `config.toml`. The two error codes use distinct names so an agent can route a JSX handoff through conversion without confusing it with a substantive lint failure.
+- **Hosted unsubscribe sync**: unsubscribe clicks land on the SharpClap companion and stay in its Postgres until pulled. Run `unsubscribe sync` before every real send so hosted opt-outs reach local suppression; `--dry-run` verifies the endpoint and key without writing suppression or cursor state.
 
 ## Conventions
 
@@ -73,6 +76,6 @@ Returns a JSON manifest of every subcommand, every flag, every exit code. No doc
 This split exists so neither tool has to do the other's job:
 
 - `email-cli` owns the Resend API surface, accounts, profiles, transports, the inbox, the webhook listener.
-- `mailing-list-cli` owns campaigns, segmentation, templates, suppression, double opt-in, A/B testing, analytics.
+- `mailing-list-cli` owns campaigns, segmentation, templates, suppression, analytics, revenue attribution, and the hosted-unsubscribe sync.
 
 For an agent: use `email-cli` for personal correspondence, `mailing-list-cli` for newsletters and campaigns. They cooperate on the same Resend account but each one stays in its lane.

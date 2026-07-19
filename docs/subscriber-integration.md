@@ -7,9 +7,11 @@ This doc shows how to wire a signup form to the CLI from common web stacks.
 ## The command
 
 ```bash
-mailing-list-cli contact add <email> --list <list-id-or-name> \
+mailing-list-cli contact add <email> --list <list-id> \
   --first-name "Alice" --last-name "Smith"
 ```
+
+`--list` takes the numeric list id, not the list name. Find it once with `mailing-list-cli list ls`; the examples below use `1`.
 
 That's it. The CLI handles:
 - Deduplication (same email = no-op)
@@ -33,7 +35,7 @@ export async function POST(req: Request) {
   try {
     const args = [
       "contact", "add", email,
-      "--list", "newsletter",  // your list name
+      "--list", "1",  // your numeric list id (find it: mailing-list-cli list ls)
     ];
     if (firstName) args.push("--first-name", firstName);
     if (lastName) args.push("--last-name", lastName);
@@ -64,7 +66,7 @@ app.post("/subscribe", (req, res) => {
   const { email, firstName } = req.body;
   try {
     execSync(
-      `mailing-list-cli contact add "${email}" --list newsletter` +
+      `mailing-list-cli contact add "${email}" --list 1` +
       (firstName ? ` --first-name "${firstName}"` : ""),
       { timeout: 10000 }
     );
@@ -82,7 +84,7 @@ import subprocess
 
 @app.post("/subscribe")
 def subscribe(email: str, first_name: str = ""):
-    cmd = ["mailing-list-cli", "contact", "add", email, "--list", "newsletter"]
+    cmd = ["mailing-list-cli", "contact", "add", email, "--list", "1"]
     if first_name:
         cmd += ["--first-name", first_name]
     result = subprocess.run(cmd, capture_output=True, timeout=10)
@@ -99,10 +101,10 @@ def subscribe(email: str, first_name: str = ""):
 For migrating from another platform:
 
 ```bash
-mailing-list-cli contact import subscribers.csv --list newsletter
+mailing-list-cli contact import subscribers.csv --list 1
 ```
 
-The CSV needs at minimum an `email` column. Optional: `first_name`, `last_name`, `tags` (comma-separated), and any custom fields you've created with `field create`.
+The CSV needs `email` and `consent_source` columns. Imports without a populated `consent_source` on every row are rejected (`csv_missing_consent_source` / `csv_row_missing_consent`) unless you pass `--unsafe-no-consent`, which tags every imported row `imported_without_consent`. Optional columns: `first_name`, `last_name`, `tags` (comma-separated), and any custom fields you've created with `field create`.
 
 ## Exit Codes
 
@@ -123,7 +125,7 @@ Your integration code should handle these:
 1. User submits signup form
 2. Your backend sends a confirmation email (via email-cli or any transactional sender)
 3. User clicks the confirmation link → hits your backend
-4. Backend calls `mailing-list-cli contact add <email> --list newsletter`
+4. Backend calls `mailing-list-cli contact add <email> --list 1`
 
 Only step 4 touches the CLI. Steps 1-3 are your standard web flow.
 
@@ -133,7 +135,7 @@ If you're using an AI agent to manage the list, the agent drives the CLI directl
 
 ```bash
 # Add a subscriber
-mailing-list-cli contact add alice@example.com --list newsletter --first-name Alice
+mailing-list-cli contact add alice@example.com --list 1 --first-name Alice
 
 # Tag them
 mailing-list-cli contact tag alice@example.com vip

@@ -10,5 +10,6 @@ pub mod segment;
 pub mod skill;
 pub mod tag;
 pub mod template;
+pub mod unsubscribe;
 pub mod update;
 pub mod webhook;

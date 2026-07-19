@@ -41,6 +41,7 @@ fn main() -> ExitCode {
         Command::Template { action } => commands::template::run(format, action),
         Command::Broadcast { action } => commands::broadcast::run(format, action),
         Command::Webhook { action } => commands::webhook::run(format, action),
+        Command::Unsubscribe { action } => commands::unsubscribe::run(format, action),
         Command::Event { action } => commands::webhook::run_event(format, action),
         Command::Report { action } => commands::report::run(format, action),
         Command::Revenue { action } => commands::revenue::run(format, action),

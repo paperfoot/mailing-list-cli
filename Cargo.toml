@@ -25,6 +25,7 @@ sha2 = "0.10"
 subtle = "2.6"
 thiserror = "2.0"
 toml = "0.8"
+ureq = { version = "2.12", features = ["json"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"

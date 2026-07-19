@@ -800,6 +800,32 @@ impl Db {
         }
     }
 
+    /// Fetch the full `Contact` row by primary key id.
+    pub fn contact_get_by_id(&self, id: i64) -> Result<Option<Contact>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, email, first_name, last_name, status, created_at
+                 FROM contact WHERE id = ?1",
+            )
+            .map_err(query_err)?;
+        let row = stmt.query_row(params![id], |row| {
+            Ok(Contact {
+                id: row.get(0)?,
+                email: row.get(1)?,
+                first_name: row.get(2)?,
+                last_name: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        });
+        match row {
+            Ok(c) => Ok(Some(c)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(query_err(e)),
+        }
+    }
+
     /// Fetch all field values for a contact, returned as (key, display_string).
     pub fn contact_fields_for(&self, contact_id: i64) -> Result<Vec<(String, String)>, AppError> {
         let mut stmt = self
@@ -1775,6 +1801,28 @@ impl Db {
             )
             .map_err(query_err)?;
         Ok(())
+    }
+
+    /// Insert a hosted unsubscribe event as applied. Returns false when the
+    /// remote id or token has already been applied locally.
+    pub fn unsubscribe_sync_event_insert(
+        &self,
+        remote_id: i64,
+        token: &str,
+        contact_id: i64,
+        broadcast_id: i64,
+    ) -> Result<bool, AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let affected = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO unsubscribe_sync_event
+                 (remote_id, token, contact_id, broadcast_id, synced_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![remote_id, token, contact_id, broadcast_id, now],
+            )
+            .map_err(query_err)?;
+        Ok(affected > 0)
     }
 
     /// Return the set of contact IDs already marked `sent` for the given

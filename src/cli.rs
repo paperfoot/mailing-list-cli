@@ -72,6 +72,11 @@ pub enum Command {
         #[command(subcommand)]
         action: WebhookAction,
     },
+    /// Sync hosted unsubscribe events into local suppression
+    Unsubscribe {
+        #[command(subcommand)]
+        action: UnsubscribeAction,
+    },
     /// Shorthand for `webhook poll`
     Event {
         #[command(subcommand)]
@@ -95,6 +100,34 @@ pub enum SkillAction {
     Install,
     /// Show installed-skill status
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum UnsubscribeAction {
+    /// Pull hosted unsubscribe events and apply them to local suppression
+    Sync(UnsubscribeSyncArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct UnsubscribeSyncArgs {
+    /// Hosted sync endpoint. Defaults to deriving /api/unsubscribes from [unsubscribe].public_url.
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// Environment variable containing the sync API key. Falls back to SYNC_API_KEY.
+    #[arg(long = "api-key-env", default_value = "MLC_UNSUBSCRIBE_SYNC_KEY")]
+    pub api_key_env: String,
+    /// Override the saved cursor and pull rows after this remote id.
+    #[arg(long)]
+    pub after: Option<i64>,
+    /// Page size for the hosted sync endpoint.
+    #[arg(long, default_value = "100")]
+    pub limit: usize,
+    /// Maximum pages to pull in one invocation.
+    #[arg(long = "max-pages", default_value = "20")]
+    pub max_pages: usize,
+    /// Verify and report hosted events without writing local suppression/cursor state.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Subcommand, Debug)]

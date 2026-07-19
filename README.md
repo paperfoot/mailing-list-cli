@@ -184,10 +184,23 @@ Tracking is a local mirror, not a direct Resend API call from this binary:
 |---|---|
 | `optin start <email> --list <id>` | Send a double opt-in confirmation |
 | `optin verify <token>` | Confirm an opt-in |
-| `unsubscribe <email>` | Honor an unsubscribe (writes to global suppression) |
+| `unsubscribe sync [--dry-run]` | Pull hosted SharpClap unsubscribe events and write local suppression |
 | `suppression ls` | View the global suppression list |
 | `suppression import <file>` | Import suppressions from another platform |
 | `dnscheck <domain>` | Verify SPF / DKIM / DMARC alignment before first send |
+
+Hosted unsubscribe clicks land on the companion app at `https://sharpclap.com/u/<token>`.
+Before a real send, run `mailing-list-cli unsubscribe sync` so those hosted
+events are mirrored into local SQLite suppression. Configure:
+
+```toml
+[unsubscribe]
+public_url = "https://sharpclap.com/u"
+secret_env = "MLC_UNSUBSCRIBE_SECRET"
+```
+
+`MLC_UNSUBSCRIBE_SECRET` must match the Vercel app secret. The sync API key is
+read from `MLC_UNSUBSCRIBE_SYNC_KEY` and falls back to `SYNC_API_KEY`.
 
 ### Webhook ingestion
 

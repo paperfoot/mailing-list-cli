@@ -47,6 +47,7 @@ pub fn run() {
             "broadcast cancel <id> --confirm": "Cancel a draft or scheduled broadcast",
             "broadcast ls [--status <s>] [--limit N]": "List recent broadcasts",
             "broadcast show <id>": "Show broadcast details including recipient + stat counts",
+            "unsubscribe sync [--endpoint <url>] [--api-key-env <env>] [--after <id>] [--limit N] [--max-pages N] [--dry-run]": "Pull hosted SharpClap unsubscribe events, verify each HMAC token, and write local suppression/contact status. Uses saved cursor in kv unless --after is passed.",
             "webhook poll [--reset]": "Poll `email-cli email list` for delivery/click status updates and mirror them into local SQLite (alias: `event poll`)",
             "event poll [--reset]": "Alias for `webhook poll`",
             "report show <broadcast-id>": "Per-broadcast summary from the local event mirror (delivered/bounced/opened/clicked/CTR). Run `event poll` first to sync latest Resend state via email-cli",
@@ -79,9 +80,12 @@ pub fn run() {
         "env_vars": {
             "MLC_EMAIL_CLI_TIMEOUT_SEC": "Timeout in seconds for any single email-cli subprocess invocation. Default: 120. On timeout, the child is killed via SIGKILL and the call returns `email_cli_timeout` (transient, feeds the existing retry path)",
             "MLC_UNSUBSCRIBE_SECRET": "HMAC secret for one-click unsubscribe link signatures. Required for `broadcast send`. Min 16 bytes",
+            "MLC_UNSUBSCRIBE_SYNC_KEY": "Bearer token for `unsubscribe sync`. Falls back to SYNC_API_KEY for Vercel/local development.",
             "MLC_SKILL_ROOTS": "Optional colon-separated skill root override for `skill install` and `skill status`. Each root receives mailing-list-cli/SKILL.md. Mainly for tests or custom agent setups."
         },
         "config_keys": {
+            "[unsubscribe].public_url": "Public one-click unsubscribe base URL. For SharpClap, set to https://sharpclap.com/u; `unsubscribe sync` derives https://sharpclap.com/api/unsubscribes from it unless --endpoint is passed",
+            "[unsubscribe].secret_env": "Environment variable holding the HMAC token secret. Must match the SharpClap/Vercel MLC_UNSUBSCRIBE_SECRET value",
             "[guards].block_design_errors": "v0.4.5: when true (default), broadcast send preflight refuses templates carrying error-level design findings (browser/JSX source, embedded scripts). Set to false to fall back to v0.4.4 advisory-only behavior",
             "[guards].max_complaint_rate": "Hard limit on 30-day complaint rate enforced at preflight (default 0.003 = 0.3%, the Gmail/Yahoo block threshold)",
             "[guards].max_bounce_rate": "Hard limit on 30-day bounce rate enforced at preflight (default 0.04 = 4%)",
@@ -108,6 +112,7 @@ pub fn run() {
         },
         "deliverability": {
             "headers": "broadcast send includes List-Unsubscribe and List-Unsubscribe-Post headers on every recipient payload",
+            "unsubscribe_sync": "Hosted one-click requests land on SharpClap (/u/:token) and are mirrored locally with `mailing-list-cli unsubscribe sync`, which writes reason='unsubscribed' suppressions before future sends",
             "body_unsubscribe": "generated unsubscribe body anchors include inline link style plus data-utm=\"off\" so UTM rewriting does not decorate compliance links",
             "plain_text": "the plain-text MIME alternative preserves anchor destinations as `Label (URL)` so CTA and unsubscribe URLs remain visible outside HTML clients",
             "template_quality": "template lint warns on unstyled text links and fragile semantic layout tags such as <main>; use table-based wrappers and inline link styles for email clients",

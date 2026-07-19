@@ -310,4 +310,18 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         CREATE INDEX idx_revenue_paid_at ON revenue(paid_at);
         "#,
     ),
+    (
+        "0007_unsubscribe_sync_events",
+        r#"
+        CREATE TABLE unsubscribe_sync_event (
+            remote_id INTEGER PRIMARY KEY,
+            token TEXT NOT NULL UNIQUE,
+            contact_id INTEGER NOT NULL,
+            broadcast_id INTEGER NOT NULL,
+            synced_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_unsubscribe_sync_contact ON unsubscribe_sync_event(contact_id);
+        CREATE INDEX idx_unsubscribe_sync_broadcast ON unsubscribe_sync_event(broadcast_id);
+        "#,
+    ),
 ];

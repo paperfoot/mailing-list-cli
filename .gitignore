@@ -24,6 +24,13 @@ Thumbs.db
 config.toml.local
 
 # Build artifacts
+node_modules/
+.next/
+web/node_modules/
+web/.next/
+web/.vercel/
+*.tsbuildinfo
 *.tar.gz
 *.zip
 dist/
+!**/.env.example

@@ -161,7 +161,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-Built by [Boris Djordjevic](https://github.com/longevityboris) at [Paperfoot AI](https://paperfoot.com)
+Built by [Boris Djordjevic](https://github.com/longevityboris) at [Paperfoot AI](https://paperfoot.si)
 
 **If this is useful to you:**
 
